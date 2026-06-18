@@ -1,0 +1,5 @@
+# Ignore all PyTorch weight files
+*.pth
+
+# Ignore WORD directory and all its contents
+WORD/
