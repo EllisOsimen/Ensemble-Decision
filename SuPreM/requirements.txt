@@ -15,6 +15,7 @@ elasticdeform
 numpy
 nibabel
 scipy
+surface-distance
 pandas
 glob2
 opencv-python

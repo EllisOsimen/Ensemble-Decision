@@ -3,3 +3,5 @@
 
 # Ignore WORD directory and all its contents
 WORD/
+.codex/
+.agents/
