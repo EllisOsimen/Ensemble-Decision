@@ -1,9 +1,9 @@
-Job ID: 3509208
+Job ID: 3509325
 Node: saxa.inf.ed.ac.uk
 Backbone: unet
 Checkpoint: pretrained_weights/supervised_suprem_unet_2100.pth
-CUDA_VISIBLE_DEVICES: MIG-96079820-224f-5ce6-bfdc-93a357cdfe8b
-Thu Jun 18 15:02:55 2026       
+CUDA_VISIBLE_DEVICES: MIG-33335fdb-cd25-5775-a576-005085e24328
+Thu Jun 18 16:57:54 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
 +-----------------------------------------+------------------------+----------------------+
@@ -11,8 +11,8 @@ Thu Jun 18 15:02:55 2026
 | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
-|   0  NVIDIA H200                    On  |   00000000:3B:00.0 Off |                   On |
-| N/A   35C    P0            126W /  700W |    6865MiB / 143771MiB |     N/A      Default |
+|   0  NVIDIA H200                    On  |   00000000:5D:00.0 Off |                   On |
+| N/A   46C    P0            255W /  700W |   14074MiB / 143771MiB |     N/A      Default |
 |                                         |                        |              Enabled |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -23,8 +23,8 @@ Thu Jun 18 15:02:55 2026
 |      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |
 |                  |                                  |        ECC|                       |
 |==================+==================================+===========+=======================|
-|  0    1   0   0  |              44MiB / 71424MiB    | 60      0 |  3   0    3    0    3 |
-|                  |               0MiB / 59237MiB    |           |                       |
+|  0    9   0   0  |              15MiB / 16384MiB    | 16      0 |  1   0    1    0    1 |
+|                  |               0MiB / 14809MiB    |           |                       |
 +------------------+----------------------------------+-----------+-----------------------+
 
 +-----------------------------------------------------------------------------------------+
@@ -34,3 +34,24 @@ Thu Jun 18 15:02:55 2026
 |=========================================================================================|
 |  No running processes found                                                             |
 +-----------------------------------------------------------------------------------------+
+Staging checkpoint to node-local storage: /tmp/s2347484/slurm-3509325/supervised_suprem_unet_2100.pth
+Checkpoint staged in 2 seconds
+Starting evaluation: python -u evaluate_word.py --device cuda --backbone unet --checkpoint /tmp/s2347484/slurm-3509325/supervised_suprem_unet_2100.pth --output-dir results/word_unet --num-workers 4 --sw-batch-size 4 --limit 1
+Loading checkpoint: /tmp/s2347484/slurm-3509325/supervised_suprem_unet_2100.pth
+Model loaded in 0.8 seconds
+word_0002.nii.gz: preprocessed shape=(1, 1, 287, 227, 401)
+word_0002.nii.gz: inference completed in 174.3 seconds
+word_0002.nii.gz: inference and metrics completed in 259.0 seconds
+{
+  "backbone": "unet",
+  "checkpoint": "/tmp/s2347484/slurm-3509325/supervised_suprem_unet_2100.pth",
+  "cases": 1,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.8021634433273521,
+  "macro_case_nsd": 0.6681674216158267,
+  "micro_dsc": 0.8697119433187477,
+  "tp": 1937506,
+  "fp": 449537,
+  "fn": 130963
+}
+Evaluation complete. Results: /home/s2347484/Seg/SuPreM/results/word_unet

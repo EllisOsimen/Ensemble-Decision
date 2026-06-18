@@ -1,0 +1,39 @@
+Job ID: 3509339
+Node: saxa.inf.ed.ac.uk
+Backbone: unet
+Checkpoint: pretrained_weights/supervised_suprem_unet_2100.pth
+CUDA_VISIBLE_DEVICES: MIG-f2781732-bee9-543b-ba3f-f50a0291ceb2
+Thu Jun 18 17:16:05 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:9B:00.0 Off |                   On |
+| N/A   49C    P0            208W /  700W |   29884MiB / 143771MiB |     N/A      Default |
+|                                         |                        |              Enabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| MIG devices:                                                                            |
++------------------+----------------------------------+-----------+-----------------------+
+| GPU  GI  CI  MIG |              Shared Memory-Usage |        Vol|        Shared         |
+|      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |
+|                  |                                  |        ECC|                       |
+|==================+==================================+===========+=======================|
+|  0    7   0   0  |              15MiB / 16384MiB    | 16      0 |  1   0    1    0    1 |
+|                  |               0MiB / 14809MiB    |           |                       |
++------------------+----------------------------------+-----------+-----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Staging checkpoint to node-local storage: /tmp/s2347484/slurm-3509339/supervised_suprem_unet_2100.pth
+Checkpoint staged in 3 seconds
+Starting evaluation: python -u evaluate_word.py --device cuda --backbone unet --checkpoint /tmp/s2347484/slurm-3509339/supervised_suprem_unet_2100.pth --output-dir results/word_unet --num-workers 4 --sw-batch-size 4

@@ -8,24 +8,24 @@ import math
 import sys
 import time
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 import torch
-from monai.data import DataLoader, Dataset, decollate_batch
+from monai.data import DataLoader, Dataset, MetaTensor, decollate_batch
 from monai.inferers import sliding_window_inference
 from monai.networks.nets import SegResNet
 from monai.transforms import (
-    AddChanneld,
     Compose,
     CropForegroundd,
+    EnsureChannelFirstd,
     Invertd,
     LoadImaged,
     Orientationd,
     ScaleIntensityRanged,
     Spacingd,
-    ToTensord,
 )
 from surface_distance import metrics as surface_distance_metrics
 from tqdm import tqdm
@@ -200,7 +200,9 @@ def make_loader(args):
     transforms = Compose(
         [
             LoadImaged(keys=["image"]),
-            AddChanneld(keys=["image"]),
+            # Add the single CT modality as an explicit channel dimension.
+            # EnsureChannelFirstd replaces the removed MONAI 0.9 AddChanneld.
+            EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
             Orientationd(keys=["image"], axcodes="RAS"),
             Spacingd(keys=["image"], pixdim=tuple(args.spacing), mode="bilinear"),
             ScaleIntensityRanged(
@@ -212,7 +214,6 @@ def make_loader(args):
                 clip=True,
             ),
             CropForegroundd(keys=["image"], source_key="image"),
-            ToTensord(keys=["image"]),
         ]
     )
     loader = DataLoader(
@@ -229,7 +230,17 @@ def invert_prediction(batch, transforms, prediction):
     #
     # This returns the 32 predicted masks to the original WORD NIfTI grid so
     # voxel-level comparison with labelsTr is spatially valid.
-    batch["prediction"] = prediction
+    item = decollate_batch(batch)[0]
+    source_image = item["image"]
+
+    # Model outputs are ordinary tensors and do not automatically retain the
+    # invertible-transform history recorded on the input MetaTensor. Attach a
+    # copy of that history so modern MONAI can undo crop, spacing and orientation.
+    item["prediction"] = MetaTensor(
+        prediction[0],
+        meta=deepcopy(source_image.meta),
+        applied_operations=deepcopy(source_image.applied_operations),
+    )
     inverter = Compose(
         [
             Invertd(
@@ -241,7 +252,7 @@ def invert_prediction(batch, transforms, prediction):
             )
         ]
     )
-    return np.asarray(inverter(decollate_batch(batch)[0])["prediction"])
+    return np.asarray(inverter(item)["prediction"])
 
 
 def binary_metrics(prediction, gold, spacing, tolerance_mm):
