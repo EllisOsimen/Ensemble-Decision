@@ -37,3 +37,7 @@ Thu Jun 18 17:16:05 2026
 Staging checkpoint to node-local storage: /tmp/s2347484/slurm-3509339/supervised_suprem_unet_2100.pth
 Checkpoint staged in 3 seconds
 Starting evaluation: python -u evaluate_word.py --device cuda --backbone unet --checkpoint /tmp/s2347484/slurm-3509339/supervised_suprem_unet_2100.pth --output-dir results/word_unet --num-workers 4 --sw-batch-size 4
+Loading checkpoint: /tmp/s2347484/slurm-3509339/supervised_suprem_unet_2100.pth
+Model loaded in 4.1 seconds
+word_0002.nii.gz: preprocessed shape=(1, 1, 287, 227, 401)
+word_0002.nii.gz: inference completed in 175.8 seconds

@@ -102,3 +102,77 @@ Each result directory contains:
 - `per_case_per_class.csv`: DSC, NSD, TP, FP, and FN for every case/class.
 - `per_class_summary.csv`: macro case metrics, micro DSC, and summed counts.
 - `overall_summary.json`: overall macro DSC/NSD, micro DSC, TP, FP, and FN.
+
+### Run on the SLURM cluster
+
+The supplied `SuPreM/evaluate_word.sbatch` requests one GPU on the `saxa`
+node in the `Teaching` partition, with 4 CPUs, 32 GB RAM and the partition's
+two-day time limit. It processes one sliding-window patch at a time so it fits
+the 16 GB H200 MIG profile as well as larger allocations.
+
+Install the two evaluation-specific dependencies once on the login node:
+
+```bash
+conda activate suprem-h200
+pip install nibabel surface-distance
+```
+
+Submit a one-case smoke test:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch evaluate_word.sbatch unet 1
+```
+
+After that succeeds, submit the complete evaluation:
+
+```bash
+sbatch evaluate_word.sbatch unet
+```
+
+The first argument can be `unet`, `swinunetr`, or `segresnet`. Monitor the
+job and inspect its logs with:
+
+```bash
+squeue -u "$USER"
+tail -f slurm_logs/suprem-word-<job-id>.out
+```
+
+To evaluate all 100 cases with all three backbones, submit the provided
+dependency chain:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+bash submit_all_backbones.sh
+```
+
+This submits three separate jobs in the following order:
+
+```text
+U-Net → Swin UNETR → SegResNet
+```
+
+Each job starts only when the preceding job finishes successfully. Separate
+allocations are safer than running all models inside one job: each backbone
+gets a fresh two-day time limit and releases the GPU before the next job is
+scheduled. The output directories are:
+
+```text
+results/word_unet/
+results/word_swinunetr/
+results/word_segresnet/
+```
+
+The log names include the backbone and job ID, for example:
+
+```text
+slurm_logs/suprem-word-unet-<job-id>.out
+slurm_logs/suprem-word-swin-<job-id>.out
+slurm_logs/suprem-word-segresnet-<job-id>.out
+```
+
+The batch script first copies the selected checkpoint to the node-local
+`$SLURM_TMPDIR`. PyTorch checkpoints contain many separate tensor entries,
+which can be unusually slow to load directly from the shared cluster
+filesystem. Inference evaluates one sliding-window patch per GPU batch to
+remain within the smallest GPU memory profile currently observed on `saxa`.
