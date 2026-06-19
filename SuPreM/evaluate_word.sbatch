@@ -4,7 +4,7 @@
 #SBATCH --nodelist=saxa
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --mem=128G
 #SBATCH --time=2-00:00:00
 #SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.out
 #SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.err
@@ -82,7 +82,7 @@ COMMAND=(
     --num-workers "${SLURM_CPUS_PER_TASK}"
     # Use one patch at a time so this also fits the 16 GB H200 MIG profile
     # that may be assigned by --gres=gpu:1.
-    --sw-batch-size 4
+    --sw-batch-size 1
 )
 
 if [[ -n "${CASE_LIMIT}" ]]; then

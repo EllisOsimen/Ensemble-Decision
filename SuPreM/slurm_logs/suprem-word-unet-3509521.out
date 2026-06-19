@@ -1,0 +1,354 @@
+Job ID: 3509521
+Node: saxa.inf.ed.ac.uk
+Backbone: unet
+Checkpoint: pretrained_weights/supervised_suprem_unet_2100.pth
+CUDA_VISIBLE_DEVICES: MIG-f5300ac0-c42a-5af4-8a6e-7e55551c6364
+Thu Jun 18 20:52:45 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:BB:00.0 Off |                   On |
+| N/A   39C    P0            199W /  700W |    6721MiB / 143771MiB |     N/A      Default |
+|                                         |                        |              Enabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| MIG devices:                                                                            |
++------------------+----------------------------------+-----------+-----------------------+
+| GPU  GI  CI  MIG |              Shared Memory-Usage |        Vol|        Shared         |
+|      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |
+|                  |                                  |        ECC|                       |
+|==================+==================================+===========+=======================|
+|  0    7   0   0  |              15MiB / 16384MiB    | 16      0 |  1   0    1    0    1 |
+|                  |               0MiB / 14809MiB    |           |                       |
++------------------+----------------------------------+-----------+-----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Staging checkpoint to node-local storage: /tmp/s2347484/slurm-3509521/supervised_suprem_unet_2100.pth
+Checkpoint staged in 2 seconds
+Starting evaluation: python -u evaluate_word.py --device cuda --backbone unet --checkpoint /tmp/s2347484/slurm-3509521/supervised_suprem_unet_2100.pth --output-dir results/word_unet --num-workers 4 --sw-batch-size 1
+Loading checkpoint: /tmp/s2347484/slurm-3509521/supervised_suprem_unet_2100.pth
+Model loaded in 1.5 seconds
+word_0002.nii.gz: preprocessed shape=(1, 1, 287, 227, 401)
+word_0002.nii.gz: inference completed in 165.7 seconds
+word_0002.nii.gz: inference and metrics completed in 252.9 seconds
+word_0003.nii.gz: preprocessed shape=(1, 1, 316, 215, 355)
+word_0003.nii.gz: inference completed in 141.8 seconds
+word_0003.nii.gz: inference and metrics completed in 218.7 seconds
+word_0004.nii.gz: preprocessed shape=(1, 1, 286, 215, 393)
+word_0004.nii.gz: inference completed in 135.4 seconds
+word_0004.nii.gz: inference and metrics completed in 209.6 seconds
+word_0005.nii.gz: preprocessed shape=(1, 1, 317, 230, 379)
+word_0005.nii.gz: inference completed in 180.1 seconds
+word_0005.nii.gz: inference and metrics completed in 263.6 seconds
+word_0006.nii.gz: preprocessed shape=(1, 1, 314, 262, 391)
+word_0006.nii.gz: inference completed in 224.0 seconds
+word_0006.nii.gz: inference and metrics completed in 303.1 seconds
+word_0008.nii.gz: preprocessed shape=(1, 1, 311, 236, 433)
+word_0008.nii.gz: inference completed in 204.4 seconds
+word_0008.nii.gz: inference and metrics completed in 310.2 seconds
+word_0009.nii.gz: preprocessed shape=(1, 1, 306, 243, 364)
+word_0009.nii.gz: inference completed in 187.1 seconds
+word_0009.nii.gz: inference and metrics completed in 282.3 seconds
+word_0010.nii.gz: preprocessed shape=(1, 1, 317, 225, 345)
+word_0010.nii.gz: inference completed in 165.4 seconds
+word_0010.nii.gz: inference and metrics completed in 242.5 seconds
+word_0011.nii.gz: preprocessed shape=(1, 1, 306, 243, 363)
+word_0011.nii.gz: inference completed in 187.6 seconds
+word_0011.nii.gz: inference and metrics completed in 286.9 seconds
+word_0012.nii.gz: preprocessed shape=(1, 1, 317, 257, 341)
+word_0012.nii.gz: inference completed in 190.6 seconds
+word_0012.nii.gz: inference and metrics completed in 273.6 seconds
+word_0013.nii.gz: preprocessed shape=(1, 1, 307, 236, 405)
+word_0013.nii.gz: inference completed in 175.6 seconds
+word_0013.nii.gz: inference and metrics completed in 260.5 seconds
+word_0018.nii.gz: preprocessed shape=(1, 1, 319, 227, 334)
+word_0018.nii.gz: inference completed in 152.7 seconds
+word_0018.nii.gz: inference and metrics completed in 246.2 seconds
+word_0020.nii.gz: preprocessed shape=(1, 1, 315, 226, 359)
+word_0020.nii.gz: inference completed in 165.4 seconds
+word_0020.nii.gz: inference and metrics completed in 249.1 seconds
+word_0022.nii.gz: preprocessed shape=(1, 1, 321, 255, 427)
+word_0022.nii.gz: inference completed in 236.5 seconds
+word_0022.nii.gz: inference and metrics completed in 354.2 seconds
+word_0026.nii.gz: preprocessed shape=(1, 1, 317, 239, 445)
+word_0026.nii.gz: inference completed in 221.2 seconds
+word_0026.nii.gz: inference and metrics completed in 331.4 seconds
+word_0027.nii.gz: preprocessed shape=(1, 1, 311, 238, 323)
+word_0027.nii.gz: inference completed in 138.6 seconds
+word_0027.nii.gz: inference and metrics completed in 205.3 seconds
+word_0028.nii.gz: preprocessed shape=(1, 1, 317, 236, 377)
+word_0028.nii.gz: inference completed in 179.2 seconds
+word_0028.nii.gz: inference and metrics completed in 263.5 seconds
+word_0029.nii.gz: preprocessed shape=(1, 1, 310, 233, 395)
+word_0029.nii.gz: inference completed in 181.5 seconds
+word_0029.nii.gz: inference and metrics completed in 252.4 seconds
+word_0030.nii.gz: preprocessed shape=(1, 1, 313, 263, 389)
+word_0030.nii.gz: inference completed in 222.4 seconds
+word_0030.nii.gz: inference and metrics completed in 315.6 seconds
+word_0032.nii.gz: preprocessed shape=(1, 1, 305, 213, 357)
+word_0032.nii.gz: inference completed in 133.6 seconds
+word_0032.nii.gz: inference and metrics completed in 198.0 seconds
+word_0036.nii.gz: preprocessed shape=(1, 1, 317, 224, 371)
+word_0036.nii.gz: inference completed in 183.9 seconds
+word_0036.nii.gz: inference and metrics completed in 268.1 seconds
+word_0038.nii.gz: preprocessed shape=(1, 1, 309, 275, 399)
+word_0038.nii.gz: inference completed in 233.7 seconds
+word_0038.nii.gz: inference and metrics completed in 346.1 seconds
+word_0040.nii.gz: preprocessed shape=(1, 1, 313, 260, 321)
+word_0040.nii.gz: inference completed in 177.4 seconds
+word_0040.nii.gz: inference and metrics completed in 250.6 seconds
+word_0041.nii.gz: preprocessed shape=(1, 1, 313, 220, 353)
+word_0041.nii.gz: inference completed in 165.4 seconds
+word_0041.nii.gz: inference and metrics completed in 234.3 seconds
+word_0042.nii.gz: preprocessed shape=(1, 1, 298, 220, 317)
+word_0042.nii.gz: inference completed in 145.3 seconds
+word_0042.nii.gz: inference and metrics completed in 200.2 seconds
+word_0044.nii.gz: preprocessed shape=(1, 1, 323, 234, 399)
+word_0044.nii.gz: inference completed in 193.2 seconds
+word_0044.nii.gz: inference and metrics completed in 289.8 seconds
+word_0046.nii.gz: preprocessed shape=(1, 1, 306, 215, 363)
+word_0046.nii.gz: inference completed in 145.6 seconds
+word_0046.nii.gz: inference and metrics completed in 217.6 seconds
+word_0047.nii.gz: preprocessed shape=(1, 1, 313, 269, 399)
+word_0047.nii.gz: inference completed in 248.4 seconds
+word_0047.nii.gz: inference and metrics completed in 344.6 seconds
+word_0049.nii.gz: preprocessed shape=(1, 1, 307, 252, 381)
+word_0049.nii.gz: inference completed in 197.2 seconds
+word_0049.nii.gz: inference and metrics completed in 283.9 seconds
+word_0051.nii.gz: preprocessed shape=(1, 1, 319, 224, 323)
+word_0051.nii.gz: inference completed in 153.0 seconds
+word_0051.nii.gz: inference and metrics completed in 225.9 seconds
+word_0053.nii.gz: preprocessed shape=(1, 1, 299, 243, 659)
+word_0053.nii.gz: inference completed in 358.6 seconds
+word_0053.nii.gz: inference and metrics completed in 585.1 seconds
+word_0055.nii.gz: preprocessed shape=(1, 1, 322, 227, 399)
+word_0055.nii.gz: inference completed in 194.6 seconds
+word_0055.nii.gz: inference and metrics completed in 291.7 seconds
+word_0056.nii.gz: preprocessed shape=(1, 1, 316, 213, 441)
+word_0056.nii.gz: inference completed in 189.0 seconds
+word_0056.nii.gz: inference and metrics completed in 286.8 seconds
+word_0058.nii.gz: preprocessed shape=(1, 1, 317, 241, 393)
+word_0058.nii.gz: inference completed in 226.5 seconds
+word_0058.nii.gz: inference and metrics completed in 319.3 seconds
+word_0059.nii.gz: preprocessed shape=(1, 1, 316, 243, 413)
+word_0059.nii.gz: inference completed in 237.0 seconds
+word_0059.nii.gz: inference and metrics completed in 342.7 seconds
+word_0061.nii.gz: preprocessed shape=(1, 1, 305, 247, 449)
+word_0061.nii.gz: inference completed in 231.3 seconds
+word_0061.nii.gz: inference and metrics completed in 331.1 seconds
+word_0062.nii.gz: preprocessed shape=(1, 1, 306, 223, 445)
+word_0062.nii.gz: inference completed in 212.8 seconds
+word_0062.nii.gz: inference and metrics completed in 303.2 seconds
+word_0063.nii.gz: preprocessed shape=(1, 1, 311, 246, 333)
+word_0063.nii.gz: inference completed in 157.6 seconds
+word_0063.nii.gz: inference and metrics completed in 230.3 seconds
+word_0064.nii.gz: preprocessed shape=(1, 1, 310, 279, 371)
+word_0064.nii.gz: inference completed in 209.9 seconds
+word_0064.nii.gz: inference and metrics completed in 337.7 seconds
+word_0065.nii.gz: preprocessed shape=(1, 1, 315, 243, 399)
+word_0065.nii.gz: inference completed in 224.2 seconds
+word_0065.nii.gz: inference and metrics completed in 351.6 seconds
+word_0067.nii.gz: preprocessed shape=(1, 1, 307, 253, 421)
+word_0067.nii.gz: inference completed in 216.5 seconds
+word_0067.nii.gz: inference and metrics completed in 309.4 seconds
+word_0068.nii.gz: preprocessed shape=(1, 1, 316, 249, 393)
+word_0068.nii.gz: inference completed in 228.3 seconds
+word_0068.nii.gz: inference and metrics completed in 328.2 seconds
+word_0070.nii.gz: preprocessed shape=(1, 1, 306, 252, 361)
+word_0070.nii.gz: inference completed in 188.5 seconds
+word_0070.nii.gz: inference and metrics completed in 271.1 seconds
+word_0071.nii.gz: preprocessed shape=(1, 1, 300, 225, 403)
+word_0071.nii.gz: inference completed in 184.8 seconds
+word_0071.nii.gz: inference and metrics completed in 260.3 seconds
+word_0072.nii.gz: preprocessed shape=(1, 1, 285, 232, 685)
+word_0072.nii.gz: inference completed in 295.7 seconds
+word_0072.nii.gz: inference and metrics completed in 501.1 seconds
+word_0073.nii.gz: preprocessed shape=(1, 1, 307, 263, 431)
+word_0073.nii.gz: inference completed in 215.2 seconds
+word_0073.nii.gz: inference and metrics completed in 328.8 seconds
+word_0078.nii.gz: preprocessed shape=(1, 1, 317, 254, 365)
+word_0078.nii.gz: inference completed in 204.8 seconds
+word_0078.nii.gz: inference and metrics completed in 300.7 seconds
+word_0079.nii.gz: preprocessed shape=(1, 1, 311, 255, 341)
+word_0079.nii.gz: inference completed in 173.0 seconds
+word_0079.nii.gz: inference and metrics completed in 250.2 seconds
+word_0081.nii.gz: preprocessed shape=(1, 1, 316, 231, 427)
+word_0081.nii.gz: inference completed in 207.2 seconds
+word_0081.nii.gz: inference and metrics completed in 314.7 seconds
+word_0082.nii.gz: preprocessed shape=(1, 1, 312, 238, 437)
+word_0082.nii.gz: inference completed in 200.6 seconds
+word_0082.nii.gz: inference and metrics completed in 302.6 seconds
+word_0084.nii.gz: preprocessed shape=(1, 1, 308, 255, 419)
+word_0084.nii.gz: inference completed in 216.2 seconds
+word_0084.nii.gz: inference and metrics completed in 306.5 seconds
+word_0086.nii.gz: preprocessed shape=(1, 1, 276, 214, 371)
+word_0086.nii.gz: inference completed in 126.7 seconds
+word_0086.nii.gz: inference and metrics completed in 197.8 seconds
+word_0087.nii.gz: preprocessed shape=(1, 1, 319, 269, 403)
+word_0087.nii.gz: inference completed in 251.8 seconds
+word_0087.nii.gz: inference and metrics completed in 365.2 seconds
+word_0089.nii.gz: preprocessed shape=(1, 1, 310, 281, 343)
+word_0089.nii.gz: inference completed in 194.9 seconds
+word_0089.nii.gz: inference and metrics completed in 271.2 seconds
+word_0090.nii.gz: preprocessed shape=(1, 1, 320, 215, 353)
+word_0090.nii.gz: inference completed in 143.4 seconds
+word_0090.nii.gz: inference and metrics completed in 229.7 seconds
+word_0091.nii.gz: preprocessed shape=(1, 1, 322, 243, 333)
+word_0091.nii.gz: inference completed in 178.9 seconds
+word_0091.nii.gz: inference and metrics completed in 260.3 seconds
+word_0093.nii.gz: preprocessed shape=(1, 1, 302, 215, 359)
+word_0093.nii.gz: inference completed in 130.2 seconds
+word_0093.nii.gz: inference and metrics completed in 200.9 seconds
+word_0094.nii.gz: preprocessed shape=(1, 1, 311, 222, 345)
+word_0094.nii.gz: inference completed in 156.3 seconds
+word_0094.nii.gz: inference and metrics completed in 228.0 seconds
+word_0095.nii.gz: preprocessed shape=(1, 1, 319, 227, 317)
+word_0095.nii.gz: inference completed in 151.6 seconds
+word_0095.nii.gz: inference and metrics completed in 221.7 seconds
+word_0096.nii.gz: preprocessed shape=(1, 1, 303, 229, 461)
+word_0096.nii.gz: inference completed in 213.8 seconds
+word_0096.nii.gz: inference and metrics completed in 323.9 seconds
+word_0100.nii.gz: preprocessed shape=(1, 1, 317, 259, 333)
+word_0100.nii.gz: inference completed in 173.4 seconds
+word_0100.nii.gz: inference and metrics completed in 266.5 seconds
+word_0101.nii.gz: preprocessed shape=(1, 1, 318, 268, 333)
+word_0101.nii.gz: inference completed in 194.9 seconds
+word_0101.nii.gz: inference and metrics completed in 274.8 seconds
+word_0102.nii.gz: preprocessed shape=(1, 1, 302, 225, 441)
+word_0102.nii.gz: inference completed in 200.5 seconds
+word_0102.nii.gz: inference and metrics completed in 287.8 seconds
+word_0104.nii.gz: preprocessed shape=(1, 1, 312, 212, 385)
+word_0104.nii.gz: inference completed in 151.1 seconds
+word_0104.nii.gz: inference and metrics completed in 225.8 seconds
+word_0105.nii.gz: preprocessed shape=(1, 1, 313, 251, 427)
+word_0105.nii.gz: inference completed in 236.2 seconds
+word_0105.nii.gz: inference and metrics completed in 341.3 seconds
+word_0106.nii.gz: preprocessed shape=(1, 1, 323, 224, 417)
+word_0106.nii.gz: inference completed in 207.4 seconds
+word_0106.nii.gz: inference and metrics completed in 297.4 seconds
+word_0107.nii.gz: preprocessed shape=(1, 1, 313, 238, 359)
+word_0107.nii.gz: inference completed in 166.0 seconds
+word_0107.nii.gz: inference and metrics completed in 248.1 seconds
+word_0108.nii.gz: preprocessed shape=(1, 1, 318, 222, 349)
+word_0108.nii.gz: inference completed in 166.1 seconds
+word_0108.nii.gz: inference and metrics completed in 247.1 seconds
+word_0109.nii.gz: preprocessed shape=(1, 1, 315, 231, 335)
+word_0109.nii.gz: inference completed in 151.7 seconds
+word_0109.nii.gz: inference and metrics completed in 230.7 seconds
+word_0111.nii.gz: preprocessed shape=(1, 1, 313, 224, 445)
+word_0111.nii.gz: inference completed in 220.5 seconds
+word_0111.nii.gz: inference and metrics completed in 347.2 seconds
+word_0113.nii.gz: preprocessed shape=(1, 1, 305, 216, 433)
+word_0113.nii.gz: inference completed in 172.0 seconds
+word_0113.nii.gz: inference and metrics completed in 288.8 seconds
+word_0114.nii.gz: preprocessed shape=(1, 1, 302, 218, 399)
+word_0114.nii.gz: inference completed in 176.0 seconds
+word_0114.nii.gz: inference and metrics completed in 254.2 seconds
+word_0115.nii.gz: preprocessed shape=(1, 1, 318, 227, 409)
+word_0115.nii.gz: inference completed in 206.7 seconds
+word_0115.nii.gz: inference and metrics completed in 302.3 seconds
+word_0116.nii.gz: preprocessed shape=(1, 1, 302, 205, 317)
+word_0116.nii.gz: inference completed in 118.3 seconds
+word_0116.nii.gz: inference and metrics completed in 177.1 seconds
+word_0117.nii.gz: preprocessed shape=(1, 1, 315, 237, 401)
+word_0117.nii.gz: inference completed in 193.0 seconds
+word_0117.nii.gz: inference and metrics completed in 290.0 seconds
+word_0118.nii.gz: preprocessed shape=(1, 1, 314, 238, 433)
+word_0118.nii.gz: inference completed in 221.0 seconds
+word_0118.nii.gz: inference and metrics completed in 328.3 seconds
+word_0119.nii.gz: preprocessed shape=(1, 1, 309, 248, 343)
+word_0119.nii.gz: inference completed in 172.3 seconds
+word_0119.nii.gz: inference and metrics completed in 247.5 seconds
+word_0121.nii.gz: preprocessed shape=(1, 1, 322, 237, 407)
+word_0121.nii.gz: inference completed in 193.0 seconds
+word_0121.nii.gz: inference and metrics completed in 310.4 seconds
+word_0122.nii.gz: preprocessed shape=(1, 1, 312, 264, 403)
+word_0122.nii.gz: inference completed in 201.2 seconds
+word_0122.nii.gz: inference and metrics completed in 302.6 seconds
+word_0123.nii.gz: preprocessed shape=(1, 1, 316, 253, 433)
+word_0123.nii.gz: inference completed in 252.0 seconds
+word_0123.nii.gz: inference and metrics completed in 359.2 seconds
+word_0125.nii.gz: preprocessed shape=(1, 1, 317, 218, 353)
+word_0125.nii.gz: inference completed in 166.4 seconds
+word_0125.nii.gz: inference and metrics completed in 239.9 seconds
+word_0126.nii.gz: preprocessed shape=(1, 1, 276, 214, 373)
+word_0126.nii.gz: inference completed in 125.7 seconds
+word_0126.nii.gz: inference and metrics completed in 216.8 seconds
+word_0127.nii.gz: preprocessed shape=(1, 1, 292, 214, 411)
+word_0127.nii.gz: inference completed in 161.2 seconds
+word_0127.nii.gz: inference and metrics completed in 228.1 seconds
+word_0128.nii.gz: preprocessed shape=(1, 1, 318, 250, 471)
+word_0128.nii.gz: inference completed in 267.7 seconds
+word_0128.nii.gz: inference and metrics completed in 396.2 seconds
+word_0130.nii.gz: preprocessed shape=(1, 1, 313, 230, 317)
+word_0130.nii.gz: inference completed in 152.3 seconds
+word_0130.nii.gz: inference and metrics completed in 224.9 seconds
+word_0132.nii.gz: preprocessed shape=(1, 1, 303, 244, 335)
+word_0132.nii.gz: inference completed in 157.5 seconds
+word_0132.nii.gz: inference and metrics completed in 224.7 seconds
+word_0133.nii.gz: preprocessed shape=(1, 1, 321, 219, 451)
+word_0133.nii.gz: inference completed in 220.6 seconds
+word_0133.nii.gz: inference and metrics completed in 347.2 seconds
+word_0134.nii.gz: preprocessed shape=(1, 1, 316, 257, 409)
+word_0134.nii.gz: inference completed in 237.8 seconds
+word_0134.nii.gz: inference and metrics completed in 338.2 seconds
+word_0135.nii.gz: preprocessed shape=(1, 1, 313, 248, 459)
+word_0135.nii.gz: inference completed in 267.8 seconds
+word_0135.nii.gz: inference and metrics completed in 386.0 seconds
+word_0136.nii.gz: preprocessed shape=(1, 1, 298, 238, 435)
+word_0136.nii.gz: inference completed in 201.4 seconds
+word_0136.nii.gz: inference and metrics completed in 283.2 seconds
+word_0138.nii.gz: preprocessed shape=(1, 1, 304, 240, 445)
+word_0138.nii.gz: inference completed in 200.5 seconds
+word_0138.nii.gz: inference and metrics completed in 290.0 seconds
+word_0140.nii.gz: preprocessed shape=(1, 1, 320, 223, 445)
+word_0140.nii.gz: inference completed in 220.5 seconds
+word_0140.nii.gz: inference and metrics completed in 324.5 seconds
+word_0142.nii.gz: preprocessed shape=(1, 1, 307, 259, 399)
+word_0142.nii.gz: inference completed in 201.0 seconds
+word_0142.nii.gz: inference and metrics completed in 286.2 seconds
+word_0143.nii.gz: preprocessed shape=(1, 1, 306, 251, 361)
+word_0143.nii.gz: inference completed in 186.4 seconds
+word_0143.nii.gz: inference and metrics completed in 280.4 seconds
+word_0144.nii.gz: preprocessed shape=(1, 1, 306, 232, 473)
+word_0144.nii.gz: inference completed in 213.5 seconds
+word_0144.nii.gz: inference and metrics completed in 318.5 seconds
+word_0145.nii.gz: preprocessed shape=(1, 1, 281, 254, 451)
+word_0145.nii.gz: inference completed in 206.9 seconds
+word_0145.nii.gz: inference and metrics completed in 297.8 seconds
+word_0146.nii.gz: preprocessed shape=(1, 1, 302, 216, 321)
+word_0146.nii.gz: inference completed in 118.3 seconds
+word_0146.nii.gz: inference and metrics completed in 176.2 seconds
+word_0147.nii.gz: preprocessed shape=(1, 1, 319, 247, 333)
+word_0147.nii.gz: inference completed in 173.3 seconds
+word_0147.nii.gz: inference and metrics completed in 266.8 seconds
+word_0148.nii.gz: preprocessed shape=(1, 1, 307, 247, 483)
+word_0148.nii.gz: inference completed in 258.0 seconds
+word_0148.nii.gz: inference and metrics completed in 373.0 seconds
+word_0150.nii.gz: preprocessed shape=(1, 1, 321, 264, 459)
+word_0150.nii.gz: inference completed in 267.9 seconds
+word_0150.nii.gz: inference and metrics completed in 391.2 seconds
+{
+  "backbone": "unet",
+  "checkpoint": "/tmp/s2347484/slurm-3509521/supervised_suprem_unet_2100.pth",
+  "cases": 100,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.8307892939235205,
+  "macro_case_nsd": 0.6765528723161904,
+  "micro_dsc": 0.8808630390509972,
+  "tp": 149324127,
+  "fp": 22154857,
+  "fn": 18237399
+}
+Evaluation complete. Results: /home/s2347484/Seg/SuPreM/results/word_unet

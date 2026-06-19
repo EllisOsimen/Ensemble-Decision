@@ -1,12 +1,12 @@
 {
   "backbone": "unet",
-  "checkpoint": "/tmp/s2347484/slurm-3509325/supervised_suprem_unet_2100.pth",
-  "cases": 1,
+  "checkpoint": "/tmp/s2347484/slurm-3509521/supervised_suprem_unet_2100.pth",
+  "cases": 100,
   "nsd_tolerance_mm": 1.0,
-  "macro_case_dsc": 0.8021634433273521,
-  "macro_case_nsd": 0.6681674216158267,
-  "micro_dsc": 0.8697119433187477,
-  "tp": 1937506,
-  "fp": 449537,
-  "fn": 130963
+  "macro_case_dsc": 0.8307892939235205,
+  "macro_case_nsd": 0.6765528723161904,
+  "micro_dsc": 0.8808630390509972,
+  "tp": 149324127,
+  "fp": 22154857,
+  "fn": 18237399
 }
