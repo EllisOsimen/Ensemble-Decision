@@ -1,0 +1,12 @@
+{
+  "backbone": "segresnet",
+  "checkpoint": "/tmp/s2347484/slurm-3509919/supervised_suprem_segresnet_2100.pth",
+  "cases": 100,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.831015661565319,
+  "macro_case_nsd": 0.7006803945207943,
+  "micro_dsc": 0.8891413539409337,
+  "tp": 147286452,
+  "fp": 16452442,
+  "fn": 20275074
+}
