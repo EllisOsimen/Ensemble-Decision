@@ -25,6 +25,10 @@ from evaluate_word import WORD_TO_SUPREM, invert_prediction, load_model
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+
+# Checkpoints are run in dictionary insertion order. Only one model is kept on
+# the GPU at a time, which keeps memory use lower than loading all three models
+# simultaneously.
 MODEL_CHECKPOINTS = {
     "unet": "supervised_suprem_unet_2100.pth",
     "swinunetr": "supervised_suprem_swinunetr_2100.pth",
@@ -33,6 +37,7 @@ MODEL_CHECKPOINTS = {
 
 
 def parse_args():
+    """Define and read the command-line options."""
     parser = argparse.ArgumentParser(
         description=(
             "Run the SuPreM U-Net, Swin UNETR, and SegResNet checkpoints on one "
@@ -63,6 +68,7 @@ def parse_args():
 
 
 def output_name(image_path):
+    """Return a compressed NIfTI filename for the model outputs."""
     if image_path.name.endswith(".nii.gz"):
         return image_path.name
     if image_path.suffix == ".nii":
@@ -71,12 +77,22 @@ def output_name(image_path):
 
 
 def make_loader(image_path, spacing):
+    """Create the one-image loader and record invertible preprocessing steps."""
+
+    # These transforms match evaluate_word.py. MONAI records orientation,
+    # spacing, and cropping operations so invert_prediction() can later return
+    # each model output to the original CT grid.
     transforms = Compose(
         [
+            # Load the NIfTI data and affine/header metadata.
             LoadImaged(keys=["image"]),
+            # Convert a 3D array into the channel-first shape [1, D, H, W].
             EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+            # Give every model a consistent anatomical orientation.
             Orientationd(keys=["image"], axcodes="RAS"),
+            # Resample to the voxel spacing used during SuPreM inference.
             Spacingd(keys=["image"], pixdim=tuple(spacing), mode="bilinear"),
+            # Clip the useful abdominal CT window and normalize it to [0, 1].
             ScaleIntensityRanged(
                 keys=["image"],
                 a_min=-175,
@@ -85,6 +101,7 @@ def make_loader(image_path, spacing):
                 b_max=1.0,
                 clip=True,
             ),
+            # Remove empty margins to reduce the volume processed by the model.
             CropForegroundd(keys=["image"], source_key="image"),
         ]
     )
@@ -98,19 +115,33 @@ def make_loader(image_path, spacing):
 
 
 def combine_word_labels(prediction):
+    """Convert 32 independent SuPreM masks into one WORD-numbered label map."""
+
+    # `prediction` has shape [32, D, H, W]. The combined output has one integer
+    # label per voxel, with 0 reserved for background.
     combined = np.zeros(prediction.shape[1:], dtype=np.uint8)
     for word_label, (_, channels) in WORD_TO_SUPREM.items():
+        # Most WORD classes map to one SuPreM channel. WORD's adrenal class maps
+        # to two channels, so logical OR merges the left and right glands.
         class_mask = np.logical_or.reduce(
             [prediction[channel] > 0 for channel in channels]
         )
+
+        # SuPreM channels are independent and can overlap. If that happens, a
+        # class processed later in WORD_TO_SUPREM overwrites the earlier label.
         combined[class_mask] = word_label
     return combined
 
 
 def save_prediction(prediction, reference, output_path):
+    """Save a uint8 label map using the input CT's spatial metadata."""
+
+    # Copying the header and affine keeps the segmentation aligned with the CT.
     header = reference.header.copy()
     header.set_data_dtype(np.uint8)
     output = nib.Nifti1Image(prediction, reference.affine, header)
+
+    # Preserve the explicit scanner/world transforms when they are present.
     qform, qform_code = reference.get_qform(coded=True)
     sform, sform_code = reference.get_sform(coded=True)
     if qform is not None:
@@ -121,6 +152,7 @@ def save_prediction(prediction, reference, output_path):
 
 
 def validate_inputs(args):
+    """Fail early for invalid paths and inference parameters."""
     if not args.image.is_file():
         raise FileNotFoundError(f"Input image does not exist: {args.image}")
     if not 0.0 <= args.overlap < 1.0:
@@ -128,6 +160,7 @@ def validate_inputs(args):
     if not 0.0 <= args.threshold <= 1.0:
         raise ValueError("--threshold must be between 0 and 1.")
 
+    # Construct and verify the expected path for each model checkpoint.
     checkpoints = {
         backbone: args.checkpoint_dir / filename
         for backbone, filename in MODEL_CHECKPOINTS.items()
@@ -139,16 +172,20 @@ def validate_inputs(args):
 
 
 def main():
+    # STEP 1 — Validate paths/settings and select the compute device.
     args = parse_args()
     checkpoints = validate_inputs(args)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable; pass --device cpu.")
 
+    # STEP 2 — Load the untouched CT as the spatial reference for every output.
     reference = nib.load(str(args.image))
     if len(reference.shape) != 3:
         raise ValueError(f"Expected a 3D CT image, got shape {reference.shape}")
 
+    # STEP 3 — Preprocess the CT once. All three models use the same tensor and
+    # transform history, ensuring their outputs are directly comparable.
     case_name = output_name(args.image)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     loader, transforms = make_loader(args.image, args.spacing)
@@ -158,6 +195,8 @@ def main():
     print(f"Original shape: {reference.shape}; preprocessed shape: {tuple(image.shape)}")
 
     combined_predictions = []
+
+    # STEP 4 — Run U-Net, Swin UNETR, and SegResNet sequentially.
     for backbone, checkpoint in checkpoints.items():
         print(f"\nRunning {backbone}...")
         args.backbone = backbone
@@ -165,6 +204,9 @@ def main():
         model = load_model(args, device)
 
         with torch.no_grad():
+            # Process overlapping 3D patches instead of placing the entire
+            # volume through the network at once. Gaussian blending reduces
+            # seams where neighboring patches overlap.
             logits = sliding_window_inference(
                 image,
                 roi_size=tuple(args.roi_size),
@@ -173,8 +215,14 @@ def main():
                 overlap=args.overlap,
                 mode="gaussian",
             )
+
+            # Each of the 32 channels is an independent binary structure.
+            # Sigmoid converts logits to probabilities, then the configured
+            # threshold (0.5 by default) produces 0/1 masks.
             masks = torch.sigmoid(logits).ge(args.threshold).to(torch.uint8).cpu()
 
+        # STEP 5 — Undo cropping, resampling, and orientation so the prediction
+        # returns to exactly the same grid as the original input CT.
         prediction = invert_prediction(batch, transforms, masks)
         if prediction.shape[1:] != reference.shape:
             raise RuntimeError(
@@ -182,6 +230,8 @@ def main():
                 f"does not match input shape {reference.shape}"
             )
 
+        # STEP 6 — Convert the 32 SuPreM masks to one WORD-numbered label map
+        # and save it under a directory named after the current backbone.
         combined = combine_word_labels(prediction)
         model_dir = args.output_dir / backbone
         model_dir.mkdir(exist_ok=True)
@@ -190,11 +240,17 @@ def main():
         combined_predictions.append(combined)
         print(f"Saved: {output_path}")
 
+        # Release this model before loading the next architecture. The combined
+        # NumPy label map is retained for the final agreement calculation.
         del model, logits, masks, prediction
         gc.collect()
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
+    # STEP 7 — Compare the three WORD maps voxel by voxel:
+    #   1 = all three labels match
+    #   2 = exactly two labels match
+    #   3 = all three labels differ
     agreement = agreement_labels(*combined_predictions)
     agreement_dir = args.output_dir / "agreement"
     agreement_dir.mkdir(exist_ok=True)
