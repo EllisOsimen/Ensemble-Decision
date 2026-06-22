@@ -103,6 +103,57 @@ Each result directory contains:
 - `per_class_summary.csv`: macro case metrics, micro DSC, and summed counts.
 - `overall_summary.json`: overall macro DSC/NSD, micro DSC, TP, FP, and FN.
 
+### Create three-model agreement maps
+
+Run all three backbones with `--save-predictions`, then compare their saved
+WORD-numbered label maps:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+python ensemble_agreement.py \
+  results/word_unet/predictions \
+  results/word_swinunetr/predictions \
+  results/word_segresnet/predictions \
+  --output-dir results/word_ensemble_agreement
+```
+
+Each output is a `uint8` NIfTI file on the same grid as its input predictions.
+Its voxel values describe model agreement:
+
+- `1`: all three models predicted the same label.
+- `2`: exactly two models predicted the same label.
+- `3`: all three models predicted different labels.
+
+Background label `0` participates in the comparison like any foreground
+label. The script requires all three directories to contain the same case
+filenames, shapes, and affine transforms.
+
+### Run all three models on one image
+
+To run U-Net, Swin UNETR, and SegResNet sequentially on one CT image:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+python infer_single_image_three_models.py \
+  --image /path/to/ct.nii.gz \
+  --output-dir results/single_image
+```
+
+The script uses the checkpoints in `pretrained_weights` by default and creates:
+
+```text
+results/single_image/
+├── unet/ct.nii.gz
+├── swinunetr/ct.nii.gz
+├── segresnet/ct.nii.gz
+└── agreement/ct.nii.gz
+```
+
+The three model outputs use WORD label IDs. The agreement output uses labels
+`1`, `2`, and `3` for all-model, two-model, and no-model agreement,
+respectively. Models are loaded and released one at a time to limit GPU memory
+use. Pass `--checkpoint-dir` if the three checkpoint files are elsewhere.
+
 ### Run on the SLURM cluster
 
 The supplied `SuPreM/evaluate_word.sbatch` requests one GPU on the `saxa`
