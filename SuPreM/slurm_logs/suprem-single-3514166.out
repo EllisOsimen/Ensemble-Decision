@@ -1,0 +1,60 @@
+Job ID: 3514166
+Node: saxa.inf.ed.ac.uk
+Input CT: /home/s2347484/Seg/WORD/WORD-V0.1.0/imagesTr/word_0002.nii.gz
+Output directory: results/single_image
+CUDA_VISIBLE_DEVICES: MIG-f2781732-bee9-543b-ba3f-f50a0291ceb2
+Mon Jun 22 11:21:05 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA H200                    On  |   00000000:9B:00.0 Off |                   On |
+| N/A   50C    P0            340W /  700W |   20454MiB / 143771MiB |     N/A      Default |
+|                                         |                        |              Enabled |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| MIG devices:                                                                            |
++------------------+----------------------------------+-----------+-----------------------+
+| GPU  GI  CI  MIG |              Shared Memory-Usage |        Vol|        Shared         |
+|      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |
+|                  |                                  |        ECC|                       |
+|==================+==================================+===========+=======================|
+|  0    7   0   0  |              15MiB / 16384MiB    | 16      0 |  1   0    1    0    1 |
+|                  |               0MiB / 14809MiB    |           |                       |
++------------------+----------------------------------+-----------+-----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Staging supervised_suprem_unet_2100.pth...
+Staging supervised_suprem_swinunetr_2100.pth...
+Staging supervised_suprem_segresnet_2100.pth...
+Input: /home/s2347484/Seg/WORD/WORD-V0.1.0/imagesTr/word_0002.nii.gz
+Original shape: (512, 512, 241); preprocessed shape: (1, 1, 287, 227, 401)
+
+Running unet...
+Loading checkpoint: /tmp/s2347484/slurm-3514166/pretrained_weights/supervised_suprem_unet_2100.pth
+Model loaded in 0.2 seconds
+Saved: results/single_image/unet/word_0002.nii.gz
+
+Running swinunetr...
+Loading checkpoint: /tmp/s2347484/slurm-3514166/pretrained_weights/supervised_suprem_swinunetr_2100.pth
+Model loaded in 0.5 seconds
+Saved: results/single_image/swinunetr/word_0002.nii.gz
+
+Running segresnet...
+Loading checkpoint: /tmp/s2347484/slurm-3514166/pretrained_weights/supervised_suprem_segresnet_2100.pth
+Model loaded in 0.1 seconds
+Saved: results/single_image/segresnet/word_0002.nii.gz
+
+Saved agreement map: results/single_image/agreement/word_0002.nii.gz
+Inference complete.
+Results: /home/s2347484/Seg/SuPreM/results/single_image
