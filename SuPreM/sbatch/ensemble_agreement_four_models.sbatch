@@ -15,10 +15,10 @@ set -euo pipefail
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch ensemble_agreement_four_models.sbatch
+#   sbatch sbatch/ensemble_agreement_four_models.sbatch
 #
 # Optional output directory:
-#   sbatch ensemble_agreement_four_models.sbatch results/my_agreement_maps
+#   sbatch sbatch/ensemble_agreement_four_models.sbatch results/my_agreement_maps
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
 UNET_DIR="${PROJECT_DIR}/results/word_three_models/unet"
@@ -75,7 +75,7 @@ echo "Array job/task: ${SLURM_ARRAY_JOB_ID}/${SLURM_ARRAY_TASK_ID}"
 echo "Case: ${CASE_NAME}"
 echo "Output: ${OUTPUT_PATH}"
 
-python -u ensemble_agreement_four_models.py \
+python -u ensemble_agreement/ensemble_agreement_four_models.py \
     --unet-dir "${UNET_DIR}" \
     --swinunetr-dir "${SWINUNETR_DIR}" \
     --segresnet-dir "${SEGRESNET_DIR}" \

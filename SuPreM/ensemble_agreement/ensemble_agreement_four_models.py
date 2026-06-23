@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create one four-level agreement map from four model predictions."""
+"""Create one agreement map from four model predictions."""
 
 import argparse
 from pathlib import Path
@@ -10,6 +10,13 @@ from tqdm import tqdm
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
+
+# WORD labels that are present in the saved three-SuPreM-model predictions but
+# are not part of the BTCV label set used by Swin 5050. When the three SuPreM
+# predictions agree on one of these labels and Swin 5050 disagrees, the output
+# agreement map uses label 5 to make that coverage gap visible.
+SWIN5050_UNSUPPORTED_WORD_LABELS = (9, 10, 11, 14, 15, 16)
 
 # Convert native Swin 5050/BTCV labels into the WORD IDs already used by the
 # three SuPreM outputs. BTCV-only structures receive reserved values so they
@@ -37,33 +44,34 @@ def parse_args():
         description=(
             "Compare U-Net, Swin UNETR, SegResNet, and Swin 5050 predictions. "
             "Output labels are 1=all four agree, 2=three agree, "
-            "3=two agree, and 4=all four disagree."
+            "3=two agree, 4=all four disagree, and 5=the three SuPreM models "
+            "agree on WORD labels 9, 10, 11, or 14-16 while Swin 5050 disagrees."
         )
     )
     parser.add_argument(
         "--unet-dir",
         type=Path,
-        default=SCRIPT_DIR / "results" / "word_three_models" / "unet",
+        default=PROJECT_DIR / "results" / "word_three_models" / "unet",
     )
     parser.add_argument(
         "--swinunetr-dir",
         type=Path,
-        default=SCRIPT_DIR / "results" / "word_three_models" / "swinunetr",
+        default=PROJECT_DIR / "results" / "word_three_models" / "swinunetr",
     )
     parser.add_argument(
         "--segresnet-dir",
         type=Path,
-        default=SCRIPT_DIR / "results" / "word_three_models" / "segresnet",
+        default=PROJECT_DIR / "results" / "word_three_models" / "segresnet",
     )
     parser.add_argument(
         "--swin5050-dir",
         type=Path,
-        default=SCRIPT_DIR / "results" / "word_swinunetr_5050",
+        default=PROJECT_DIR / "results" / "word_swinunetr_5050",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=SCRIPT_DIR / "results" / "word_four_model_agreement",
+        default=PROJECT_DIR / "results" / "word_four_model_agreement",
     )
     parser.add_argument(
         "--case-name",
@@ -165,7 +173,20 @@ def four_model_agreement(first, second, third, fourth):
     largest_vote = vote_counts.max(axis=0)
 
     # Convert largest vote size 4,3,2,1 into agreement label 1,2,3,4.
-    return (5 - largest_vote).astype(np.uint8)
+    agreement = (5 - largest_vote).astype(np.uint8)
+
+    # Special case:
+    #   label 5 = all three SuPreM/WORD predictions agree on a WORD label that
+    #   Swin 5050/BTCV does not support, and Swin 5050 therefore disagrees.
+    #
+    # This separates "three models agree" caused by a BTCV coverage gap from
+    # ordinary three-versus-one disagreement.
+    suprem_models_agree = (first == second) & (first == third)
+    unsupported_word_label = np.isin(first, SWIN5050_UNSUPPORTED_WORD_LABELS)
+    swin5050_disagrees = fourth != first
+    agreement[suprem_models_agree & unsupported_word_label & swin5050_disagrees] = 5
+
+    return agreement
 
 
 def save_map(data, reference, output_path, description, cal_min, cal_max):
@@ -228,9 +249,9 @@ def main():
             agreement,
             images[0],
             output_path,
-            "Agreement: 1=four, 2=three, 3=two, 4=none",
+            "Agreement: 1=four, 2=three, 3=two, 4=none, 5=BTCV gap",
             1,
-            4,
+            5,
         )
         saved_count += 1
 
