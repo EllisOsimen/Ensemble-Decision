@@ -154,6 +154,128 @@ The three model outputs use WORD label IDs. The agreement output uses labels
 respectively. Models are loaded and released one at a time to limit GPU memory
 use. Pass `--checkpoint-dir` if the three checkpoint files are elsewhere.
 
+Submit the same single-image workflow to SLURM with:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch infer_single_image_three_models.sbatch \
+  /path/to/ct.nii.gz \
+  results/single_image
+```
+
+The CT path is required. The output directory is optional and defaults to
+`results/single_image`. The batch job activates `suprem-h200`, requests one
+GPU, stages all three checkpoints to node-local storage, and runs the models
+sequentially.
+
+To infer on all 100 images in `WORD/WORD-V0.1.0/imagesTr`, submit the SLURM
+array:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch infer_word_images_three_models.sbatch
+```
+
+Optionally specify a different output directory:
+
+```bash
+sbatch infer_word_images_three_models.sbatch results/word_three_models
+```
+
+Each array task processes one image with all three models and writes its
+results into the shared `unet`, `swinunetr`, `segresnet`, and `agreement`
+subdirectories. Logs include the array job and task IDs. Array tasks load the
+three checkpoints directly from `pretrained_weights`; they do not duplicate
+the checkpoint files in `/tmp`. Resubmitting the array is safe: complete cases
+exit immediately, while partially complete cases reuse existing masks and run
+only the missing models. Pass `--overwrite` directly to
+`infer_single_image_three_models.py` only when all outputs should be replaced.
+
+### Run Tang et al. Swin UNETR 5050 on WORD
+
+The downloaded `self_supervised_nv_swin_unetr_5050.pt` checkpoint is a
+complete BTCV model with background plus 13 abdominal organs. Run inference
+on all 100 WORD `imagesTr` scans with:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch infer_word_swinunetr_5050.sbatch
+```
+
+Predictions are written to `results/word_swinunetr_5050` by default. Each
+output preserves the input filename and uses the model's native BTCV labels:
+
+```text
+0 background                 7 stomach
+1 spleen                     8 aorta
+2 right kidney               9 inferior vena cava
+3 left kidney               10 portal and splenic veins
+4 gallbladder               11 pancreas
+5 esophagus                 12 right adrenal gland
+6 liver                     13 left adrenal gland
+```
+
+These are BTCV IDs, not WORD IDs. The array runs at most four scans
+concurrently and safely skips outputs that already exist when resubmitted.
+
+### Compare the three SuPreM models with Swin 5050
+
+After all four inference outputs are complete, create one four-level agreement
+map for every case:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+conda activate suprem-h200
+python ensemble_agreement_four_models.py
+```
+
+The Swin 5050 BTCV labels are first translated to the WORD numbering used by
+the three SuPreM outputs. Each agreement map uses:
+
+```text
+1 = all four models predicted the same structure
+2 = three models predicted the same structure
+3 = two models predicted the same structure
+4 = all four models predicted different structures
+```
+
+A 2-vs-2 draw and a 2-vs-1-vs-1 result both receive agreement label `3`,
+because the largest agreeing group contains two models. Swin 5050 structures
+that are absent from the saved WORD maps are kept distinct from background.
+
+All outputs are written directly under:
+
+```text
+results/word_four_model_agreement/
+```
+
+For all 100 cases, use the CPU-only SLURM array:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch ensemble_agreement_four_models.sbatch
+```
+
+Each array task processes one case, up to eight tasks concurrently. Existing
+agreement files are skipped, so the array can safely be resubmitted.
+
+### Count voxels and percentages by label
+
+Calculate the voxel count and percentage of the complete image occupied by
+each label:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+conda activate suprem-h200
+python label_voxel_statistics.py \
+  --image results/single_image/agreement/word_0002.nii.gz
+```
+
+The table is printed to the terminal and saved beside the input as
+`word_0002_voxel_statistics.csv`. Background label `0` is included by default.
+Use `--exclude-background` to omit it from the table; percentages remain
+relative to the total number of voxels in the image.
+
 ### Run on the SLURM cluster
 
 The supplied `SuPreM/evaluate_word.sbatch` requests one GPU on the `saxa`

@@ -64,6 +64,11 @@ def parse_args():
         help="Sliding-window patches evaluated together; 1 uses the least GPU memory.",
     )
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Rerun all three models and replace existing outputs.",
+    )
     return parser.parse_args()
 
 
@@ -151,7 +156,7 @@ def save_prediction(prediction, reference, output_path):
     nib.save(output, str(output_path))
 
 
-def validate_inputs(args):
+def validate_inputs(args, required_backbones):
     """Fail early for invalid paths and inference parameters."""
     if not args.image.is_file():
         raise FileNotFoundError(f"Input image does not exist: {args.image}")
@@ -160,10 +165,12 @@ def validate_inputs(args):
     if not 0.0 <= args.threshold <= 1.0:
         raise ValueError("--threshold must be between 0 and 1.")
 
-    # Construct and verify the expected path for each model checkpoint.
+    # Only models with missing outputs need their checkpoints. A fully complete
+    # case can therefore resume without loading or even checking model files.
     checkpoints = {
         backbone: args.checkpoint_dir / filename
         for backbone, filename in MODEL_CHECKPOINTS.items()
+        if backbone in required_backbones
     }
     missing = [str(path) for path in checkpoints.values() if not path.is_file()]
     if missing:
@@ -171,33 +178,84 @@ def validate_inputs(args):
     return checkpoints
 
 
+def load_existing_prediction(path, reference, backbone):
+    """Load and validate one completed WORD-numbered model prediction."""
+    image = nib.load(str(path))
+    if image.shape != reference.shape:
+        raise ValueError(
+            f"{backbone}: existing output shape {image.shape} does not match "
+            f"input shape {reference.shape}: {path}"
+        )
+    if not np.allclose(image.affine, reference.affine, rtol=1e-5, atol=1e-5):
+        raise ValueError(f"{backbone}: existing output affine does not match: {path}")
+
+    prediction = np.asanyarray(image.dataobj)
+    if not np.all(np.equal(prediction, np.round(prediction))):
+        raise ValueError(f"{backbone}: existing output has non-integer labels: {path}")
+    return np.round(prediction).astype(np.uint8)
+
+
 def main():
-    # STEP 1 — Validate paths/settings and select the compute device.
+    # STEP 1 — Identify completed and missing outputs before loading any model.
     args = parse_args()
-    checkpoints = validate_inputs(args)
-    device = torch.device(args.device)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but is unavailable; pass --device cpu.")
+    if not args.image.is_file():
+        raise FileNotFoundError(f"Input image does not exist: {args.image}")
+    case_name = output_name(args.image)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_paths = {
+        backbone: args.output_dir / backbone / case_name
+        for backbone in MODEL_CHECKPOINTS
+    }
+    agreement_path = args.output_dir / "agreement" / case_name
+
+    if args.overwrite:
+        missing_backbones = list(MODEL_CHECKPOINTS)
+    else:
+        missing_backbones = [
+            backbone
+            for backbone, output_path in output_paths.items()
+            if not output_path.is_file()
+        ]
+
+    if not missing_backbones and agreement_path.is_file() and not args.overwrite:
+        print(f"All model outputs and agreement map already exist; skipping {case_name}")
+        return
 
     # STEP 2 — Load the untouched CT as the spatial reference for every output.
     reference = nib.load(str(args.image))
     if len(reference.shape) != 3:
         raise ValueError(f"Expected a 3D CT image, got shape {reference.shape}")
 
-    # STEP 3 — Preprocess the CT once. All three models use the same tensor and
-    # transform history, ensuring their outputs are directly comparable.
-    case_name = output_name(args.image)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    loader, transforms = make_loader(args.image, args.spacing)
-    batch = next(iter(loader))
-    image = batch["image"].to(device)
-    print(f"Input: {args.image}")
-    print(f"Original shape: {reference.shape}; preprocessed shape: {tuple(image.shape)}")
+    # Reuse every valid existing prediction instead of rerunning its model.
+    combined_predictions = {}
+    if not args.overwrite:
+        for backbone, output_path in output_paths.items():
+            if output_path.is_file():
+                combined_predictions[backbone] = load_existing_prediction(
+                    output_path, reference, backbone
+                )
+                print(f"Reusing existing {backbone} prediction: {output_path}")
 
-    combined_predictions = []
+    # STEP 3 — Preprocess only when at least one model still needs inference.
+    if missing_backbones:
+        checkpoints = validate_inputs(args, missing_backbones)
+        device = torch.device(args.device)
+        if device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "CUDA was requested but is unavailable; pass --device cpu."
+            )
+        loader, transforms = make_loader(args.image, args.spacing)
+        batch = next(iter(loader))
+        image = batch["image"].to(device)
+        print(f"Input: {args.image}")
+        print(
+            f"Original shape: {reference.shape}; "
+            f"preprocessed shape: {tuple(image.shape)}"
+        )
 
     # STEP 4 — Run U-Net, Swin UNETR, and SegResNet sequentially.
-    for backbone, checkpoint in checkpoints.items():
+    for backbone in missing_backbones:
+        checkpoint = checkpoints[backbone]
         print(f"\nRunning {backbone}...")
         args.backbone = backbone
         args.checkpoint = checkpoint
@@ -233,11 +291,10 @@ def main():
         # STEP 6 — Convert the 32 SuPreM masks to one WORD-numbered label map
         # and save it under a directory named after the current backbone.
         combined = combine_word_labels(prediction)
-        model_dir = args.output_dir / backbone
-        model_dir.mkdir(exist_ok=True)
-        output_path = model_dir / case_name
+        output_path = output_paths[backbone]
+        output_path.parent.mkdir(exist_ok=True)
         save_prediction(combined, reference, output_path)
-        combined_predictions.append(combined)
+        combined_predictions[backbone] = combined
         print(f"Saved: {output_path}")
 
         # Release this model before loading the next architecture. The combined
@@ -251,10 +308,11 @@ def main():
     #   1 = all three labels match
     #   2 = exactly two labels match
     #   3 = all three labels differ
-    agreement = agreement_labels(*combined_predictions)
-    agreement_dir = args.output_dir / "agreement"
-    agreement_dir.mkdir(exist_ok=True)
-    agreement_path = agreement_dir / case_name
+    ordered_predictions = [
+        combined_predictions[backbone] for backbone in MODEL_CHECKPOINTS
+    ]
+    agreement = agreement_labels(*ordered_predictions)
+    agreement_path.parent.mkdir(exist_ok=True)
     save_agreement(agreement, reference, agreement_path)
     print(f"\nSaved agreement map: {agreement_path}")
 

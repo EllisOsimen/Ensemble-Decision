@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
 #SBATCH --time=2-00:00:00
-#SBATCH --array=0-99
+#SBATCH --array=0-99%4
 #SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.out
 #SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.err
 
@@ -26,6 +26,11 @@ IMAGE_DIR="/home/s2347484/Seg/WORD/WORD-V0.1.0/imagesTr"
 OUTPUT_DIR="${1:-results/word_three_models}"
 CHECKPOINT_DIR="${PROJECT_DIR}/pretrained_weights"
 
+# Interpret relative output paths from the SuPreM project directory.
+if [[ "${OUTPUT_DIR}" != /* ]]; then
+    OUTPUT_DIR="${PROJECT_DIR}/${OUTPUT_DIR}"
+fi
+
 mkdir -p "${PROJECT_DIR}/slurm_logs"
 
 mapfile -d '' IMAGES < <(find "${IMAGE_DIR}" -maxdepth 1 -type f -name '*.nii.gz' \
@@ -44,6 +49,22 @@ if (( SLURM_ARRAY_TASK_ID >= IMAGE_COUNT )); then
 fi
 
 INPUT_CT="${IMAGES[SLURM_ARRAY_TASK_ID]}"
+CASE_NAME="$(basename "${INPUT_CT}")"
+
+UNET_OUTPUT="${OUTPUT_DIR}/unet/${CASE_NAME}"
+SWIN_OUTPUT="${OUTPUT_DIR}/swinunetr/${CASE_NAME}"
+SEGRESNET_OUTPUT="${OUTPUT_DIR}/segresnet/${CASE_NAME}"
+AGREEMENT_OUTPUT="${OUTPUT_DIR}/agreement/${CASE_NAME}"
+
+# A fully completed case exits without activating Python or loading checkpoints.
+if [[ -f "${UNET_OUTPUT}" \
+    && -f "${SWIN_OUTPUT}" \
+    && -f "${SEGRESNET_OUTPUT}" \
+    && -f "${AGREEMENT_OUTPUT}" ]]
+then
+    echo "All outputs already exist; skipping ${CASE_NAME}"
+    exit 0
+fi
 
 source /opt/conda/etc/profile.d/conda.sh
 conda activate suprem-h200

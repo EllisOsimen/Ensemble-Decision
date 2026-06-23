@@ -1,6 +1,10 @@
 # Ignore all PyTorch weight files
 *.pth
-
+*.pt
+*.nii.gz
+*.pyc
+*.err
+*.out
 # Ignore WORD directory and all its contents
 WORD/
 .codex/
