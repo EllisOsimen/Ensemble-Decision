@@ -226,7 +226,7 @@ map for every case:
 ```bash
 cd /home/s2347484/Seg/SuPreM
 conda activate suprem-h200
-python ensemble_agreement_four_models.py
+python ensemble_agreement/ensemble_agreement_four_models.py
 ```
 
 The Swin 5050 BTCV labels are first translated to the WORD numbering used by
@@ -253,7 +253,7 @@ For all 100 cases, use the CPU-only SLURM array:
 
 ```bash
 cd /home/s2347484/Seg/SuPreM
-sbatch ensemble_agreement_four_models.sbatch
+sbatch sbatch/ensemble_agreement_four_models.sbatch
 ```
 
 Each array task processes one case, up to eight tasks concurrently. Existing
@@ -267,7 +267,7 @@ each label:
 ```bash
 cd /home/s2347484/Seg/SuPreM
 conda activate suprem-h200
-python label_voxel_statistics.py \
+python statistics/label_voxel_statistics.py \
   --image results/single_image/agreement/word_0002.nii.gz
 ```
 
@@ -275,6 +275,18 @@ The table is printed to the terminal and saved beside the input as
 `word_0002_voxel_statistics.csv`. Background label `0` is included by default.
 Use `--exclude-background` to omit it from the table; percentages remain
 relative to the total number of voxels in the image.
+
+To aggregate every NIfTI label map in a directory:
+
+```bash
+python statistics/label_voxel_statistics.py \
+  --image results/word_four_model_agreement
+```
+
+Directory mode creates `per_case_per_label.csv` and `per_label_summary.csv`.
+The summary reports the mean and population standard deviation of voxel counts
+and image percentages for each label. If a label is absent from a case, that
+case contributes zero to its mean and standard deviation.
 
 ### Run on the SLURM cluster
 
