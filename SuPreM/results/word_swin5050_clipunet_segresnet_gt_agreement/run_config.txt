@@ -1,0 +1,4 @@
+labels_dir=/home/s2347484/Seg/WORD/WORD-V0.1.0/labelsTr
+model=swin5050	label_space=btcv	directory=/home/s2347484/Seg/SuPreM/results/word_swinunetr_5050
+model=clip_unet	label_space=word	directory=/home/s2347484/Seg/SuPreM/results/word_clip_universal_unet
+model=segresnet	label_space=word	directory=/home/s2347484/Seg/SuPreM/results/word_three_models/segresnet

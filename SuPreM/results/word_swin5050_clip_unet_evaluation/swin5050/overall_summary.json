@@ -1,0 +1,13 @@
+{
+  "model": "swin5050",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/word_swinunetr_5050",
+  "label_space": "btcv",
+  "cases": 100,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.3904640631092907,
+  "macro_case_nsd": 0.5497533256971452,
+  "micro_dsc": 0.5470664941761574,
+  "tp": 65873813,
+  "fp": 7390278,
+  "fn": 101687713
+}

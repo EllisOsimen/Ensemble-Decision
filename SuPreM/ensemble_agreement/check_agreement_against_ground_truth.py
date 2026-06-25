@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Check how often four model predictions match WORD ground truth labels.
+"""Check how often model predictions match WORD ground-truth labels.
 
-For every ground-truth voxel, this script asks:
-
-    "How many of the four models predicted the same label as the ground truth?"
-
-It then summarizes those answers per WORD structure. For example, for pancreas
-voxels it counts how many pancreas voxels were predicted correctly by exactly
-4, 3, 2, 1, or 0 models.
-
-The Swin UNETR 5050 predictions are native BTCV labels, so they are remapped to
-the WORD label space before comparison.
+Prediction directories are configurable, so the same script can compare any
+set of WORD-numbered models plus optional native BTCV predictions such as the
+Swin UNETR 5050 checkpoint.
 """
 
 from __future__ import annotations
@@ -18,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import nibabel as nib
@@ -50,9 +44,8 @@ WORD_LABEL_NAMES = {
 }
 
 
-# Convert native Swin 5050/BTCV labels into the WORD IDs already used by the
-# three SuPreM outputs. BTCV-only structures receive reserved values so they
-# remain distinct from WORD background rather than being treated as label 0.
+# Convert native Swin 5050/BTCV labels into WORD IDs. BTCV-only structures use
+# reserved values so they do not look like WORD background during comparison.
 BTCV_TO_WORD = {
     0: 0,    # background
     1: 2,    # spleen
@@ -71,20 +64,62 @@ BTCV_TO_WORD = {
 }
 
 
-CORRECTNESS_COLUMNS = [
-    "correct_4_voxels",
-    "correct_3_voxels",
-    "correct_2_voxels",
-    "correct_1_voxels",
-    "correct_0_voxels",
-]
+@dataclass(frozen=True)
+class ModelSpec:
+    name: str
+    directory: Path
+    label_space: str = "word"
+
+
+def default_models() -> list[ModelSpec]:
+    return [
+        ModelSpec("unet", PROJECT_DIR / "results" / "word_three_models" / "unet"),
+        ModelSpec(
+            "swinunetr",
+            PROJECT_DIR / "results" / "word_three_models" / "swinunetr",
+        ),
+        ModelSpec(
+            "segresnet",
+            PROJECT_DIR / "results" / "word_three_models" / "segresnet",
+        ),
+        ModelSpec(
+            "swin5050",
+            PROJECT_DIR / "results" / "word_swinunetr_5050",
+            "btcv",
+        ),
+    ]
+
+
+def parse_model_spec(value: str) -> ModelSpec:
+    """Parse NAME=DIR or NAME=DIR:LABEL_SPACE."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError(
+            "--model must be formatted as NAME=DIR or NAME=DIR:LABEL_SPACE"
+        )
+    name, rest = value.split("=", 1)
+    name = name.strip()
+    if not name:
+        raise argparse.ArgumentTypeError("Model name cannot be empty.")
+
+    label_space = "word"
+    directory_text = rest
+    if ":" in rest:
+        possible_directory, possible_label_space = rest.rsplit(":", 1)
+        if possible_label_space in {"word", "btcv"}:
+            directory_text = possible_directory
+            label_space = possible_label_space
+    directory = Path(directory_text)
+    if not directory.is_absolute():
+        directory = PROJECT_DIR / directory
+    return ModelSpec(name=name, directory=directory, label_space=label_space)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare U-Net, SuPreM Swin UNETR, SegResNet, and Swin UNETR 5050 "
-            "prediction masks against WORD labelsTr."
+            "Compare configurable model prediction directories against WORD "
+            "labelsTr. Use --model NAME=DIR or --model NAME=DIR:btcv for native "
+            "BTCV predictions that must be remapped first."
         )
     )
     parser.add_argument(
@@ -94,33 +129,20 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing WORD ground-truth label maps.",
     )
     parser.add_argument(
-        "--unet-dir",
-        type=Path,
-        default=PROJECT_DIR / "results" / "word_three_models" / "unet",
-        help="Directory containing WORD-numbered SuPreM U-Net masks.",
-    )
-    parser.add_argument(
-        "--swinunetr-dir",
-        type=Path,
-        default=PROJECT_DIR / "results" / "word_three_models" / "swinunetr",
-        help="Directory containing WORD-numbered SuPreM Swin UNETR masks.",
-    )
-    parser.add_argument(
-        "--segresnet-dir",
-        type=Path,
-        default=PROJECT_DIR / "results" / "word_three_models" / "segresnet",
-        help="Directory containing WORD-numbered SuPreM SegResNet masks.",
-    )
-    parser.add_argument(
-        "--swin5050-dir",
-        type=Path,
-        default=PROJECT_DIR / "results" / "word_swinunetr_5050",
-        help="Directory containing native BTCV Swin UNETR 5050 masks.",
+        "--model",
+        dest="models",
+        type=parse_model_spec,
+        action="append",
+        default=None,
+        help=(
+            "Model prediction directory. Format: NAME=DIR or NAME=DIR:LABEL_SPACE. "
+            "LABEL_SPACE can be word or btcv. Repeat once per model."
+        ),
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=PROJECT_DIR / "results" / "word_four_model_ground_truth_agreement",
+        default=PROJECT_DIR / "results" / "word_model_ground_truth_agreement",
         help="Directory where CSV summaries will be written.",
     )
     parser.add_argument(
@@ -154,19 +176,36 @@ def nifti_files(directory: Path, name: str) -> dict[str, Path]:
     return files
 
 
-def matching_cases(args: argparse.Namespace) -> tuple[dict[str, dict[str, Path]], list[str]]:
-    """Find case names that exist in all four prediction directories and labelsTr."""
-    files = {
-        "labels": nifti_files(args.labels_dir, "labelsTr"),
-        "unet": nifti_files(args.unet_dir, "U-Net"),
-        "swinunetr": nifti_files(args.swinunetr_dir, "SuPreM Swin UNETR"),
-        "segresnet": nifti_files(args.segresnet_dir, "SegResNet"),
-        "swin5050": nifti_files(args.swin5050_dir, "Swin UNETR 5050"),
+def validate_models(models: list[ModelSpec]) -> None:
+    if len(models) < 2:
+        raise ValueError("Pass at least two --model entries.")
+    names = [model.name for model in models]
+    duplicate_names = sorted({name for name in names if names.count(name) > 1})
+    if duplicate_names:
+        raise ValueError(f"Duplicate model name(s): {duplicate_names}")
+    bad_label_spaces = sorted(
+        {model.label_space for model in models if model.label_space not in {"word", "btcv"}}
+    )
+    if bad_label_spaces:
+        raise ValueError(f"Unsupported label space(s): {bad_label_spaces}")
+
+
+def matching_cases(
+    labels_dir: Path,
+    models: list[ModelSpec],
+    case_name: str | None,
+) -> tuple[dict[str, Path], dict[str, dict[str, Path]], list[str]]:
+    """Find case names that exist in every prediction directory and labelsTr."""
+    label_files = nifti_files(labels_dir, "labelsTr")
+    files_by_model = {
+        model.name: nifti_files(model.directory, model.name)
+        for model in models
     }
 
-    reference_names = set(files["unet"])
-    for name in ("swinunetr", "segresnet", "swin5050"):
-        names = set(files[name])
+    reference_model = models[0]
+    reference_names = set(files_by_model[reference_model.name])
+    for model in models[1:]:
+        names = set(files_by_model[model.name])
         if names != reference_names:
             missing = sorted(reference_names - names)
             extra = sorted(names - reference_names)
@@ -175,9 +214,11 @@ def matching_cases(args: argparse.Namespace) -> tuple[dict[str, dict[str, Path]]
                 details.append(f"missing {len(missing)} case(s), e.g. {missing[:3]}")
             if extra:
                 details.append(f"has {len(extra)} extra case(s), e.g. {extra[:3]}")
-            raise ValueError(f"Prediction case mismatch for {name}: {'; '.join(details)}")
+            raise ValueError(
+                f"Prediction case mismatch for {model.name}: {'; '.join(details)}"
+            )
 
-    missing_labels = sorted(reference_names - set(files["labels"]))
+    missing_labels = sorted(reference_names - set(label_files))
     if missing_labels:
         raise ValueError(
             "Ground-truth labelsTr is missing "
@@ -185,14 +226,14 @@ def matching_cases(args: argparse.Namespace) -> tuple[dict[str, dict[str, Path]]
         )
 
     case_names = sorted(reference_names)
-    if args.case_name is not None:
-        if args.case_name not in case_names:
+    if case_name is not None:
+        if case_name not in case_names:
             raise FileNotFoundError(
-                f"{args.case_name} is not present in all prediction directories."
+                f"{case_name} is not present in all prediction directories."
             )
-        case_names = [args.case_name]
+        case_names = [case_name]
 
-    return files, case_names
+    return label_files, files_by_model, case_names
 
 
 def load_integer_mask(path: Path) -> tuple[nib.Nifti1Image, np.ndarray]:
@@ -209,13 +250,14 @@ def validate_grid(
     case_name: str,
     label_image: nib.Nifti1Image,
     prediction_images: list[nib.Nifti1Image],
+    models: list[ModelSpec],
     ignore_affine: bool,
 ) -> None:
     """Make sure voxel indices line up before doing voxel-level comparisons."""
-    for index, prediction_image in enumerate(prediction_images, start=1):
+    for model, prediction_image in zip(models, prediction_images):
         if prediction_image.shape != label_image.shape:
             raise ValueError(
-                f"{case_name}: prediction {index} shape {prediction_image.shape} "
+                f"{case_name}: {model.name} shape {prediction_image.shape} "
                 f"does not match labelsTr shape {label_image.shape}"
             )
         if not ignore_affine and not np.allclose(
@@ -225,17 +267,19 @@ def validate_grid(
             atol=1e-5,
         ):
             raise ValueError(
-                f"{case_name}: prediction {index} affine does not match labelsTr. "
+                f"{case_name}: {model.name} affine does not match labelsTr. "
                 "If you have inspected this and only want array-index comparison, "
                 "rerun with --ignore-affine."
             )
 
 
-def remap_btcv_to_word(btcv: np.ndarray, case_name: str) -> np.ndarray:
+def remap_btcv_to_word(btcv: np.ndarray, case_name: str, model_name: str) -> np.ndarray:
     unique_labels = np.unique(btcv).astype(int)
     unknown = sorted(set(unique_labels) - set(BTCV_TO_WORD))
     if unknown:
-        raise ValueError(f"{case_name}: unexpected Swin 5050 BTCV label(s): {unknown}")
+        raise ValueError(
+            f"{case_name}: unexpected BTCV label(s) in {model_name}: {unknown}"
+        )
 
     max_label = max(int(unique_labels.max()), max(BTCV_TO_WORD))
     lookup = np.zeros(max_label + 1, dtype=np.int16)
@@ -244,17 +288,15 @@ def remap_btcv_to_word(btcv: np.ndarray, case_name: str) -> np.ndarray:
     return lookup[btcv]
 
 
-def empty_counts() -> dict[str, int]:
-    return {
-        "total_gt_voxels": 0,
-        "correct_4_voxels": 0,
-        "correct_3_voxels": 0,
-        "correct_2_voxels": 0,
-        "correct_1_voxels": 0,
-        "correct_0_voxels": 0,
-        "suprem3_agree_swin5050_disagrees_voxels": 0,
-        "suprem3_correct_swin5050_wrong_voxels": 0,
-    }
+def correctness_columns(model_count: int) -> list[str]:
+    return [f"correct_{count}_voxels" for count in range(model_count, -1, -1)]
+
+
+def empty_counts(model_count: int) -> dict[str, int]:
+    counts = {"total_gt_voxels": 0}
+    for column in correctness_columns(model_count):
+        counts[column] = 0
+    return counts
 
 
 def add_counts(target: dict[str, int], source: dict[str, int]) -> None:
@@ -268,7 +310,12 @@ def percent(numerator: int, denominator: int) -> float:
     return 100.0 * numerator / denominator
 
 
-def make_row(case_name: str | None, label: int | None, counts: dict[str, int]) -> dict[str, object]:
+def make_row(
+    case_name: str | None,
+    label: int | None,
+    counts: dict[str, int],
+    model_count: int,
+) -> dict[str, object]:
     total = counts["total_gt_voxels"]
     row: dict[str, object] = {}
     if case_name is not None:
@@ -278,110 +325,73 @@ def make_row(case_name: str | None, label: int | None, counts: dict[str, int]) -
         row["structure"] = label_name(label)
 
     row.update(counts)
-    for column in CORRECTNESS_COLUMNS:
+    for column in correctness_columns(model_count):
         row[column.replace("_voxels", "_percent")] = round(
             percent(counts[column], total),
             6,
         )
-    row["suprem3_agree_swin5050_disagrees_percent"] = round(
-        percent(counts["suprem3_agree_swin5050_disagrees_voxels"], total),
-        6,
-    )
-    row["suprem3_correct_swin5050_wrong_percent"] = round(
-        percent(counts["suprem3_correct_swin5050_wrong_voxels"], total),
-        6,
-    )
     return row
 
 
 def analyze_case(
     case_name: str,
-    paths: dict[str, Path],
+    label_path: Path,
+    model_paths: dict[str, Path],
+    models: list[ModelSpec],
     labels_to_report: list[int],
     ignore_affine: bool,
 ) -> tuple[list[dict[str, object]], dict[str, object], dict[int, dict[str, int]]]:
-    label_image, ground_truth = load_integer_mask(paths["labels"])
-    unet_image, unet = load_integer_mask(paths["unet"])
-    swinunetr_image, swinunetr = load_integer_mask(paths["swinunetr"])
-    segresnet_image, segresnet = load_integer_mask(paths["segresnet"])
-    swin5050_image, swin5050_native = load_integer_mask(paths["swin5050"])
+    label_image, ground_truth = load_integer_mask(label_path)
+    prediction_images = []
+    predictions = []
+    for model in models:
+        prediction_image, prediction = load_integer_mask(model_paths[model.name])
+        prediction_images.append(prediction_image)
+        if model.label_space == "btcv":
+            prediction = remap_btcv_to_word(prediction, case_name, model.name)
+        predictions.append(prediction)
 
-    validate_grid(
-        case_name,
-        label_image,
-        [unet_image, swinunetr_image, segresnet_image, swin5050_image],
-        ignore_affine,
-    )
-
-    swin5050 = remap_btcv_to_word(swin5050_native, case_name)
-    predictions = (unet, swinunetr, segresnet, swin5050)
+    validate_grid(case_name, label_image, prediction_images, models, ignore_affine)
 
     correct_count = np.zeros(ground_truth.shape, dtype=np.uint8)
     for prediction in predictions:
         correct_count += prediction == ground_truth
 
-    suprem3_agree = (unet == swinunetr) & (unet == segresnet)
-    suprem3_agree_swin5050_disagrees = suprem3_agree & (swin5050 != unet)
-    suprem3_correct_swin5050_wrong = suprem3_agree_swin5050_disagrees & (
-        unet == ground_truth
-    )
-
+    model_count = len(models)
     per_label_rows = []
     per_label_counts = {}
-    case_counts = empty_counts()
+    case_counts = empty_counts(model_count)
     max_reported_label = max(labels_to_report)
 
     included_voxels = np.isin(ground_truth, labels_to_report)
     included_labels = ground_truth[included_voxels].astype(np.int64, copy=False)
-    included_correct_counts = correct_count[included_voxels].astype(np.int64, copy=False)
+    included_correct_counts = correct_count[included_voxels].astype(
+        np.int64,
+        copy=False,
+    )
 
-    # Build a compact 2D histogram:
-    #   rows    = WORD labels
-    #   columns = number of models correct, from 0 through 4
-    combined_index = included_labels * 5 + included_correct_counts
+    combined_index = included_labels * (model_count + 1) + included_correct_counts
     correctness_histogram = np.bincount(
         combined_index,
-        minlength=(max_reported_label + 1) * 5,
-    ).reshape(max_reported_label + 1, 5)
-
-    suprem3_disagree_counts = np.bincount(
-        ground_truth[suprem3_agree_swin5050_disagrees & included_voxels].astype(
-            np.int64,
-            copy=False,
-        ),
-        minlength=max_reported_label + 1,
-    )
-    suprem3_correct_swin_wrong_counts = np.bincount(
-        ground_truth[suprem3_correct_swin5050_wrong & included_voxels].astype(
-            np.int64,
-            copy=False,
-        ),
-        minlength=max_reported_label + 1,
-    )
+        minlength=(max_reported_label + 1) * (model_count + 1),
+    ).reshape(max_reported_label + 1, model_count + 1)
 
     for label in labels_to_report:
-        counts = empty_counts()
-        # Histogram column 0 means zero models correct, column 4 means all four
-        # models correct. CSV columns are ordered 4 -> 0 for reading.
+        counts = empty_counts(model_count)
         histogram = correctness_histogram[label]
         counts["total_gt_voxels"] = int(histogram.sum())
-        counts["correct_4_voxels"] = int(histogram[4])
-        counts["correct_3_voxels"] = int(histogram[3])
-        counts["correct_2_voxels"] = int(histogram[2])
-        counts["correct_1_voxels"] = int(histogram[1])
-        counts["correct_0_voxels"] = int(histogram[0])
-        counts["suprem3_agree_swin5050_disagrees_voxels"] = int(
-            suprem3_disagree_counts[label]
-        )
-        counts["suprem3_correct_swin5050_wrong_voxels"] = int(
-            suprem3_correct_swin_wrong_counts[label]
-        )
+        for correct_models in range(model_count, -1, -1):
+            counts[f"correct_{correct_models}_voxels"] = int(histogram[correct_models])
 
         add_counts(case_counts, counts)
         per_label_counts[label] = counts
-        per_label_rows.append(make_row(case_name, label, counts))
+        per_label_rows.append(make_row(case_name, label, counts, model_count))
 
-    return per_label_rows, make_row(case_name, None, case_counts), per_label_counts
+    return (
+        per_label_rows,
+        make_row(case_name, None, case_counts, model_count),
+        per_label_counts,
+    )
 
 
 def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
@@ -391,9 +401,26 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
         writer.writerows(rows)
 
 
+def write_run_config(path: Path, models: list[ModelSpec], labels_dir: Path) -> None:
+    with path.open("w") as file:
+        file.write(f"labels_dir={labels_dir}\n")
+        for model in models:
+            file.write(
+                f"model={model.name}\tlabel_space={model.label_space}"
+                f"\tdirectory={model.directory}\n"
+            )
+
+
 def main() -> None:
     args = parse_args()
-    files, case_names = matching_cases(args)
+    models = args.models if args.models is not None else default_models()
+    validate_models(models)
+
+    label_files, files_by_model, case_names = matching_cases(
+        args.labels_dir,
+        models,
+        args.case_name,
+    )
 
     labels_to_report = sorted(label for label in WORD_LABEL_NAMES if label != 0)
     if args.include_background:
@@ -403,20 +430,20 @@ def main() -> None:
 
     per_case_per_structure_rows = []
     per_case_rows = []
-    aggregate_by_label = defaultdict(empty_counts)
+    model_count = len(models)
+    aggregate_by_label = defaultdict(lambda: empty_counts(model_count))
     cases_with_label = defaultdict(int)
 
     for case_name in tqdm(case_names, desc="Checking agreement vs labelsTr"):
-        paths = {
-            "labels": files["labels"][case_name],
-            "unet": files["unet"][case_name],
-            "swinunetr": files["swinunetr"][case_name],
-            "segresnet": files["segresnet"][case_name],
-            "swin5050": files["swin5050"][case_name],
+        model_paths = {
+            model.name: files_by_model[model.name][case_name]
+            for model in models
         }
         label_rows, case_row, per_label_counts = analyze_case(
             case_name,
-            paths,
+            label_files[case_name],
+            model_paths,
+            models,
             labels_to_report,
             args.ignore_affine,
         )
@@ -430,40 +457,28 @@ def main() -> None:
 
     per_structure_rows = []
     for label in labels_to_report:
-        row = make_row(None, label, aggregate_by_label[label])
+        row = make_row(None, label, aggregate_by_label[label], model_count)
         row["cases_with_structure"] = cases_with_label[label]
         row["case_count"] = len(case_names)
         per_structure_rows.append(row)
 
+    correctness_fields = correctness_columns(model_count)
+    correctness_percent_fields = [
+        column.replace("_voxels", "_percent") for column in correctness_fields
+    ]
     per_case_per_structure_fields = [
         "case",
         "label",
         "structure",
         "total_gt_voxels",
-        *CORRECTNESS_COLUMNS,
-        "correct_4_percent",
-        "correct_3_percent",
-        "correct_2_percent",
-        "correct_1_percent",
-        "correct_0_percent",
-        "suprem3_agree_swin5050_disagrees_voxels",
-        "suprem3_agree_swin5050_disagrees_percent",
-        "suprem3_correct_swin5050_wrong_voxels",
-        "suprem3_correct_swin5050_wrong_percent",
+        *correctness_fields,
+        *correctness_percent_fields,
     ]
     per_case_fields = [
         "case",
         "total_gt_voxels",
-        *CORRECTNESS_COLUMNS,
-        "correct_4_percent",
-        "correct_3_percent",
-        "correct_2_percent",
-        "correct_1_percent",
-        "correct_0_percent",
-        "suprem3_agree_swin5050_disagrees_voxels",
-        "suprem3_agree_swin5050_disagrees_percent",
-        "suprem3_correct_swin5050_wrong_voxels",
-        "suprem3_correct_swin5050_wrong_percent",
+        *correctness_fields,
+        *correctness_percent_fields,
     ]
     per_structure_fields = [
         "label",
@@ -471,16 +486,8 @@ def main() -> None:
         "case_count",
         "cases_with_structure",
         "total_gt_voxels",
-        *CORRECTNESS_COLUMNS,
-        "correct_4_percent",
-        "correct_3_percent",
-        "correct_2_percent",
-        "correct_1_percent",
-        "correct_0_percent",
-        "suprem3_agree_swin5050_disagrees_voxels",
-        "suprem3_agree_swin5050_disagrees_percent",
-        "suprem3_correct_swin5050_wrong_voxels",
-        "suprem3_correct_swin5050_wrong_percent",
+        *correctness_fields,
+        *correctness_percent_fields,
     ]
 
     write_csv(
@@ -494,8 +501,9 @@ def main() -> None:
         per_structure_rows,
         per_structure_fields,
     )
+    write_run_config(args.output_dir / "run_config.txt", models, args.labels_dir)
 
-    print(f"Processed {len(case_names)} case(s).")
+    print(f"Processed {len(case_names)} case(s) with {model_count} model(s).")
     print(f"Wrote CSV files to: {args.output_dir}")
 
 
