@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Run the Tang et al. Swin UNETR BTCV model on one CT NIfTI image."""
+"""Run the SuPreM SegResNet checkpoint on one CT NIfTI image."""
 
 import argparse
-import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -11,6 +10,7 @@ import numpy as np
 import torch
 from monai.data import DataLoader, Dataset, MetaTensor, decollate_batch
 from monai.inferers import sliding_window_inference
+from monai.networks.nets import SegResNet
 from monai.transforms import (
     Compose,
     CropForegroundd,
@@ -25,33 +25,33 @@ from monai.transforms import (
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
-sys.path.insert(0, str(PROJECT_DIR / "benchmark_backbones"))
-from model.SwinUNETR import SwinUNETR  # noqa: E402
 
 
-BTCV_LABELS = {
-    0: "background",
-    1: "spleen",
-    2: "right_kidney",
-    3: "left_kidney",
-    4: "gallbladder",
-    5: "esophagus",
-    6: "liver",
-    7: "stomach",
-    8: "aorta",
-    9: "inferior_vena_cava",
-    10: "portal_and_splenic_veins",
-    11: "pancreas",
-    12: "right_adrenal_gland",
-    13: "left_adrenal_gland",
+WORD_TO_SUPREM = {
+    1: ("liver", (5,)),
+    2: ("spleen", (0,)),
+    3: ("left_kidney", (2,)),
+    4: ("right_kidney", (1,)),
+    5: ("stomach", (6,)),
+    6: ("gallbladder", (3,)),
+    7: ("esophagus", (4,)),
+    8: ("pancreas", (10,)),
+    9: ("duodenum", (13,)),
+    10: ("colon", (17,)),
+    11: ("intestine", (18,)),
+    12: ("adrenal", (11, 12)),
+    13: ("rectum", (19,)),
+    14: ("bladder", (20,)),
+    15: ("head_of_femur_left", (22,)),
+    16: ("head_of_femur_right", (23,)),
 }
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Run the 14-channel Tang et al. Swin UNETR checkpoint on one CT. "
-            "The saved label map uses native BTCV labels 0-13."
+            "Run supervised_suprem_segresnet_2100.pth on one CT and save one "
+            "combined label map with WORD labels 0-16."
         )
     )
     parser.add_argument("--image", type=Path, required=True)
@@ -59,15 +59,14 @@ def parse_args():
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=PROJECT_DIR
-        / "pretrained_weights"
-        / "self_supervised_nv_swin_unetr_5050.pt",
+        default=PROJECT_DIR / "pretrained_weights" / "supervised_suprem_segresnet_2100.pth",
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--roi-size", type=int, nargs=3, default=(96, 96, 96))
     parser.add_argument("--spacing", type=float, nargs=3, default=(1.5, 1.5, 1.5))
-    parser.add_argument("--overlap", type=float, default=0.5)
+    parser.add_argument("--overlap", type=float, default=0.75)
     parser.add_argument("--sw-batch-size", type=int, default=1)
+    parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -76,8 +75,55 @@ def parse_args():
     return parser.parse_args()
 
 
+def checkpoint_state(checkpoint):
+    for key in ("net", "state_dict"):
+        if isinstance(checkpoint, dict) and key in checkpoint:
+            return checkpoint[key]
+    return checkpoint
+
+
+def strip_module_prefix(state):
+    return {
+        (key[7:] if key.startswith("module.") else key): value
+        for key, value in state.items()
+    }
+
+
+def load_checkpoint(path):
+    try:
+        return torch.load(path, map_location="cpu", weights_only=True)
+    except TypeError:
+        return torch.load(path, map_location="cpu")
+
+
+def load_model(args, device):
+    model = SegResNet(
+        blocks_down=[1, 2, 2, 4],
+        blocks_up=[1, 1, 1],
+        init_filters=16,
+        in_channels=1,
+        out_channels=32,
+        dropout_prob=0.0,
+    )
+    raw = load_checkpoint(args.checkpoint)
+    state = strip_module_prefix(checkpoint_state(raw))
+
+    try:
+        model.load_state_dict(state, strict=True)
+    except RuntimeError as error:
+        target = model.state_dict()
+        if len(target) != len(state):
+            raise RuntimeError(
+                f"Checkpoint/model mismatch ({len(state)} versus {len(target)} tensors)."
+            ) from error
+        if any(a.shape != b.shape for a, b in zip(target.values(), state.values())):
+            raise RuntimeError("Checkpoint tensors do not match this model.") from error
+        model.load_state_dict(dict(zip(target.keys(), state.values())), strict=True)
+
+    return model.to(device).eval()
+
+
 def make_loader(image_path, spacing):
-    """Standardize the CT while retaining transforms needed for inversion."""
     transforms = Compose(
         [
             LoadImaged(keys=["image"]),
@@ -104,30 +150,11 @@ def make_loader(image_path, spacing):
     return loader, transforms
 
 
-def load_model(args, device):
-    """Build the 14-class BTCV architecture and load the complete checkpoint."""
-    model = SwinUNETR(
-        img_size=tuple(args.roi_size),
-        in_channels=1,
-        out_channels=len(BTCV_LABELS),
-        feature_size=48,
-        drop_rate=0.0,
-        attn_drop_rate=0.0,
-        dropout_path_rate=0.0,
-        use_checkpoint=False,
-    )
-    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    state = checkpoint["state_dict"]
-    model.load_state_dict(state, strict=True)
-    return model.to(device).eval()
-
-
-def invert_prediction(batch, transforms, prediction):
-    """Return the predicted label map to the input CT's original spatial grid."""
+def invert_prediction(batch, transforms, masks):
     item = decollate_batch(batch)[0]
     source = item["image"]
     item["prediction"] = MetaTensor(
-        prediction[0],
+        masks[0],
         meta=deepcopy(source.meta),
         applied_operations=deepcopy(source.applied_operations),
     )
@@ -145,13 +172,20 @@ def invert_prediction(batch, transforms, prediction):
     return np.asarray(inverter(item)["prediction"])
 
 
+def combine_word_labels(masks):
+    combined = np.zeros(masks.shape[1:], dtype=np.uint8)
+    for word_label, (_, channels) in WORD_TO_SUPREM.items():
+        class_mask = np.logical_or.reduce([masks[channel] > 0 for channel in channels])
+        combined[class_mask] = word_label
+    return combined
+
+
 def save_prediction(prediction, reference, output_path):
-    """Save uint8 BTCV labels while preserving the original NIfTI geometry."""
     header = reference.header.copy()
     header.set_data_dtype(np.uint8)
     header["cal_min"] = 0
-    header["cal_max"] = 13
-    header["descrip"] = "Tang Swin UNETR BTCV labels 0-13"
+    header["cal_max"] = 16
+    header["descrip"] = "SuPreM SegResNet WORD labels 0-16"
     output = nib.Nifti1Image(prediction.astype(np.uint8), reference.affine, header)
 
     qform, qform_code = reference.get_qform(coded=True)
@@ -174,6 +208,10 @@ def main():
     if args.output.exists() and not args.overwrite:
         print(f"Output already exists; skipping: {args.output}")
         return
+    if not 0.0 <= args.threshold <= 1.0:
+        raise ValueError("--threshold must be between 0 and 1.")
+    if not 0.0 <= args.overlap < 1.0:
+        raise ValueError("--overlap must be at least 0 and less than 1.")
 
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -200,19 +238,19 @@ def main():
             overlap=args.overlap,
             mode="gaussian",
         )
-        # The 14 outputs are mutually exclusive BTCV classes.
-        prediction = torch.argmax(logits, dim=1, keepdim=True).to(torch.uint8).cpu()
+        masks = torch.sigmoid(logits).ge(args.threshold).to(torch.uint8).cpu()
 
-    restored = invert_prediction(batch, transforms, prediction)
-    restored = np.squeeze(restored, axis=0)
-    if restored.shape != reference.shape:
+    restored = invert_prediction(batch, transforms, masks)
+    if restored.shape[1:] != reference.shape:
         raise RuntimeError(
-            f"Restored shape {restored.shape} does not match input {reference.shape}"
+            f"Restored shape {restored.shape[1:]} does not match input {reference.shape}"
         )
 
-    save_prediction(restored, reference, args.output)
-    print(f"Saved BTCV prediction: {args.output}")
-    print(f"Labels present: {np.unique(restored).astype(int).tolist()}")
+    combined = combine_word_labels(restored)
+    save_prediction(combined, reference, args.output)
+    present = np.unique(combined).astype(int).tolist()
+    print(f"Saved prediction: {args.output}")
+    print(f"Labels present: {present}")
 
 
 if __name__ == "__main__":
