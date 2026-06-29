@@ -1,0 +1,6 @@
+labels_dir=/home/s2347484/Seg/Dataset/LabelsTr
+evaluated_labels={1: 'liver', 2: 'spleen', 3: 'leftkidney', 4: 'rightkidney'}
+ignored_labels={5: 'leftlung', 6: 'rightlung', 7: 'bone', 8: 'skin', 9: 'artery', 10: 'portalvein', 11: 'venoussystem'}
+model=swin5050	label_space=btcv	directory=/home/s2347484/Seg/SuPreM/results/3d_dataset_inference/swinunetr_5050
+model=clip_unet	label_space=suprem	directory=/home/s2347484/Seg/SuPreM/results/3d_dataset_inference/clip_universal_unet
+model=segresnet	label_space=suprem	directory=/home/s2347484/Seg/SuPreM/results/3d_dataset_inference/suprem_segresnet

@@ -1,0 +1,29 @@
+{
+  "model": "segresnet",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/3d_dataset_inference/suprem_segresnet",
+  "label_space": "suprem",
+  "labels_dir": "/home/s2347484/Seg/Dataset/LabelsTr",
+  "cases": 20,
+  "nsd_tolerance_mm": 1.0,
+  "evaluated_labels": {
+    "1": "liver",
+    "2": "spleen",
+    "3": "leftkidney",
+    "4": "rightkidney"
+  },
+  "ignored_labels": {
+    "5": "leftlung",
+    "6": "rightlung",
+    "7": "bone",
+    "8": "skin",
+    "9": "artery",
+    "10": "portalvein",
+    "11": "venoussystem"
+  },
+  "macro_case_dsc": 0.03743423686809787,
+  "macro_case_nsd": 0.05829755543297399,
+  "micro_dsc": 0.06896877192558674,
+  "tp": 3577561,
+  "fp": 59023283,
+  "fn": 37565968
+}
