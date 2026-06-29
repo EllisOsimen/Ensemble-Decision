@@ -1,0 +1,18 @@
+{
+  "model": "clip_unet",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/eval_inference/clip_universal_unet",
+  "label_space": "suprem",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 60,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.8434603854254701,
+  "macro_case_nsd": 0.6625662567813788,
+  "micro_dsc": 0.997413537345136,
+  "micro_dsc_foreground": 0.9096905995646688,
+  "macro_case_dsc_foreground": 0.7917133451916868,
+  "macro_case_nsd_foreground": 0.5647050448806182,
+  "tp": 14649154144,
+  "fp": 37987744,
+  "fn": 37987744
+}

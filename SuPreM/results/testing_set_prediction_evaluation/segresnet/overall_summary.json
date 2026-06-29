@@ -1,0 +1,18 @@
+{
+  "model": "segresnet",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/eval_inference/suprem_segresnet",
+  "label_space": "suprem",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 60,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.8029606595903471,
+  "macro_case_nsd": 0.6656018904648433,
+  "micro_dsc": 0.9928418155280505,
+  "micro_dsc_foreground": 0.6785607035678743,
+  "macro_case_dsc_foreground": 0.7384982760657349,
+  "macro_case_nsd_foreground": 0.5707036247735207,
+  "tp": 14582008617,
+  "fp": 105133271,
+  "fn": 105133271
+}

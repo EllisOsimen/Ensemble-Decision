@@ -41,6 +41,10 @@ WORD_LABELS = {
 }
 
 
+# BTCV and WORD use different integer IDs for the same organs. This lookup lets
+# a BTCV-style prediction be evaluated against WORD labels without retraining or
+# rewriting the prediction files. Values 101-103 are deliberately outside WORD
+# so those non-WORD structures never count as a WORD foreground class.
 BTCV_TO_WORD = {
     0: 0,
     1: 2,    # spleen
@@ -61,12 +65,16 @@ BTCV_TO_WORD = {
 
 @dataclass(frozen=True)
 class ModelSpec:
+    """Command-line description of one prediction directory to evaluate."""
+
     name: str
     directory: Path
     label_space: str = "word"
 
 
 def parse_model_spec(value: str) -> ModelSpec:
+    """Parse NAME=DIR or NAME=DIR:LABEL_SPACE entries from repeated --model flags."""
+
     if "=" not in value:
         raise argparse.ArgumentTypeError(
             "--model must be formatted as NAME=DIR or NAME=DIR:LABEL_SPACE"
@@ -125,6 +133,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
+    """Write rows with a stable column order so outputs are easy to compare."""
+
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -132,6 +142,8 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
 
 
 def load_integer_mask(path: Path) -> tuple[nib.Nifti1Image, np.ndarray]:
+    """Load a NIfTI label map and make sure it contains class IDs, not probabilities."""
+
     image = nib.load(str(path))
     data = np.asanyarray(image.dataobj)
     if not np.issubdtype(data.dtype, np.integer):
@@ -142,6 +154,8 @@ def load_integer_mask(path: Path) -> tuple[nib.Nifti1Image, np.ndarray]:
 
 
 def remap_btcv_to_word(prediction: np.ndarray, case_name: str, model_name: str) -> np.ndarray:
+    """Convert a BTCV-numbered prediction into WORD label IDs using a lookup table."""
+
     unique_labels = np.unique(prediction).astype(int)
     unknown = sorted(set(unique_labels) - set(BTCV_TO_WORD))
     if unknown:
@@ -157,6 +171,9 @@ def remap_btcv_to_word(prediction: np.ndarray, case_name: str, model_name: str) 
 
 
 def binary_metrics(prediction, gold, spacing, tolerance_mm):
+    """Compute Dice, normalized surface Dice, and voxel confusion counts."""
+
+    # Convert to booleans first so the same metric code works for any label ID.
     prediction = np.asarray(prediction, dtype=bool)
     gold = np.asarray(gold, dtype=bool)
     tp = int(np.logical_and(prediction, gold).sum())
@@ -166,6 +183,8 @@ def binary_metrics(prediction, gold, spacing, tolerance_mm):
     dsc = (2.0 * tp / denominator) if denominator else math.nan
 
     if prediction.any() and gold.any():
+        # NSD uses physical distances, so voxel spacing from the NIfTI header is
+        # required. Empty masks have no surface, so those NSD values are NaN.
         distances = surface_distance_metrics.compute_surface_distances(
             gold,
             prediction,
@@ -183,6 +202,8 @@ def binary_metrics(prediction, gold, spacing, tolerance_mm):
 
 
 def prediction_files(directory: Path) -> dict[str, Path]:
+    """Return predictions keyed by filename, matching the WORD labelsTr names."""
+
     if not directory.is_dir():
         raise NotADirectoryError(f"Prediction directory does not exist: {directory}")
     files = {path.name: path for path in directory.glob("*.nii.gz")}
@@ -192,6 +213,8 @@ def prediction_files(directory: Path) -> dict[str, Path]:
 
 
 def labels_files(directory: Path) -> dict[str, Path]:
+    """Return gold WORD labels keyed by filename."""
+
     if not directory.is_dir():
         raise NotADirectoryError(f"labelsTr directory does not exist: {directory}")
     files = {path.name: path for path in directory.glob("*.nii.gz")}
@@ -201,6 +224,10 @@ def labels_files(directory: Path) -> dict[str, Path]:
 
 
 def validate_grid(case_name, label_image, prediction_image, model, ignore_affine):
+    """Confirm prediction and gold label occupy the same voxel grid."""
+
+    # Shape equality checks array dimensions. Affine equality checks that those
+    # array indices refer to the same physical coordinates in scanner space.
     if prediction_image.shape != label_image.shape:
         raise ValueError(
             f"{case_name}: {model.name} shape {prediction_image.shape} "
@@ -219,6 +246,8 @@ def validate_grid(case_name, label_image, prediction_image, model, ignore_affine
 
 
 def evaluate_model(model: ModelSpec, label_files, args) -> None:
+    """Evaluate one model directory and write its CSV/JSON reports."""
+
     pred_files = prediction_files(model.directory)
     case_names = sorted(pred_files)
     if args.case_name is not None:
@@ -242,10 +271,13 @@ def evaluate_model(model: ModelSpec, label_files, args) -> None:
         prediction_image, prediction = load_integer_mask(pred_files[case_name])
         validate_grid(case_name, label_image, prediction_image, model, args.ignore_affine)
         if model.label_space == "btcv":
+            # After this point every prediction is treated as WORD-numbered.
             prediction = remap_btcv_to_word(prediction, case_name, model.name)
 
         spacing = tuple(float(value) for value in label_image.header.get_zooms()[:3])
         for word_label, class_name in WORD_LABELS.items():
+            # Metrics are calculated one organ at a time by turning the integer
+            # label map into binary masks for this specific WORD class.
             pred_mask = prediction == word_label
             gold_mask = gold == word_label
             dsc, nsd, tp, fp, fn = binary_metrics(
@@ -274,6 +306,9 @@ def evaluate_model(model: ModelSpec, label_files, args) -> None:
             if not math.isnan(nsd):
                 totals[class_name]["nsd"].append(nsd)
 
+    # mean_case_* averages per-case scores, while micro_dsc recomputes Dice from
+    # summed TP/FP/FN counts across all cases. They answer slightly different
+    # questions, so both are written.
     summary_rows = []
     global_tp = global_fp = global_fn = 0
     all_case_dsc, all_case_nsd = [], []
@@ -343,6 +378,7 @@ def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     label_files = labels_files(args.labels_dir)
+    # Save the exact inputs used for the run beside the metric outputs.
     with (args.output_dir / "run_config.txt").open("w") as handle:
         handle.write(f"labels_dir={args.labels_dir}\n")
         for model in args.models:

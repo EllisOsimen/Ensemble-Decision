@@ -12,22 +12,27 @@
 
 set -euo pipefail
 
-# Run 3-model inference for one testing_set case per SLURM array task.
+# Run 3-model inference for one case/image per SLURM array task.
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
 #   sbatch sbatch/infer_testing_set_three_models.sbatch
 #
 # Optional arguments:
-#   sbatch sbatch/infer_testing_set_three_models.sbatch [OUTPUT_DIR] [TEST_ROOT]
+#   sbatch sbatch/infer_testing_set_three_models.sbatch [OUTPUT_DIR] [INPUT_ROOT]
 #
 # Defaults:
 #   OUTPUT_DIR -> results/eval_inference
-#   TEST_ROOT  -> /home/s2347484/Seg/testing_set
+#   INPUT_ROOT -> /home/s2347484/Seg/testing_set
+#
+# INPUT_ROOT can be either:
+#   1. a testing_set-style directory with one folder per case, each containing
+#      ct.nii.gz or image.nii.gz
+#   2. a flat directory of .nii.gz files, such as /home/s2347484/Seg/Dataset/ImagesTr
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
 OUTPUT_DIR="${1:-results/eval_inference}"
-TEST_ROOT="${2:-/home/s2347484/Seg/testing_set}"
+INPUT_ROOT="${2:-/home/s2347484/Seg/testing_set}"
 CHECKPOINT_DIR="${PROJECT_DIR}/pretrained_weights"
 
 CLIP_CHECKPOINT="${CHECKPOINT_DIR}/supervised_clip_driven_universal_unet_2100.pth"
@@ -40,8 +45,8 @@ fi
 
 mkdir -p "${PROJECT_DIR}/slurm_logs"
 
-if [[ ! -d "${TEST_ROOT}" ]]; then
-    echo "Testing root not found: ${TEST_ROOT}" >&2
+if [[ ! -d "${INPUT_ROOT}" ]]; then
+    echo "Input root not found: ${INPUT_ROOT}" >&2
     exit 1
 fi
 
@@ -56,30 +61,42 @@ do
     fi
 done
 
-mapfile -d '' CASE_DIRS < <(find "${TEST_ROOT}" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
-
 declare -a CASE_NAMES
 declare -a INPUT_IMAGES
 
-for CASE_DIR in "${CASE_DIRS[@]}"; do
-    CASE_NAME="$(basename "${CASE_DIR}")"
+mapfile -d '' CASE_DIRS < <(find "${INPUT_ROOT}" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
 
-    if [[ -f "${CASE_DIR}/ct.nii.gz" ]]; then
-        INPUT_IMAGE="${CASE_DIR}/ct.nii.gz"
-    elif [[ -f "${CASE_DIR}/image.nii.gz" ]]; then
-        INPUT_IMAGE="${CASE_DIR}/image.nii.gz"
-    else
-        echo "Skipping ${CASE_NAME}: no ct.nii.gz or image.nii.gz found" >&2
-        continue
-    fi
+if (( ${#CASE_DIRS[@]} > 0 )); then
+    for CASE_DIR in "${CASE_DIRS[@]}"; do
+        CASE_NAME="$(basename "${CASE_DIR}")"
 
-    CASE_NAMES+=("${CASE_NAME}")
-    INPUT_IMAGES+=("${INPUT_IMAGE}")
-done
+        if [[ -f "${CASE_DIR}/ct.nii.gz" ]]; then
+            INPUT_IMAGE="${CASE_DIR}/ct.nii.gz"
+        elif [[ -f "${CASE_DIR}/image.nii.gz" ]]; then
+            INPUT_IMAGE="${CASE_DIR}/image.nii.gz"
+        else
+            echo "Skipping ${CASE_NAME}: no ct.nii.gz or image.nii.gz found" >&2
+            continue
+        fi
+
+        CASE_NAMES+=("${CASE_NAME}")
+        INPUT_IMAGES+=("${INPUT_IMAGE}")
+    done
+else
+    mapfile -d '' IMAGE_FILES < <(find "${INPUT_ROOT}" -mindepth 1 -maxdepth 1 -type f -name '*.nii.gz' -print0 | sort -z)
+
+    for INPUT_IMAGE in "${IMAGE_FILES[@]}"; do
+        CASE_NAME="$(basename "${INPUT_IMAGE}")"
+        CASE_NAME="${CASE_NAME%.nii.gz}"
+
+        CASE_NAMES+=("${CASE_NAME}")
+        INPUT_IMAGES+=("${INPUT_IMAGE}")
+    done
+fi
 
 CASE_COUNT="${#CASE_NAMES[@]}"
 if (( CASE_COUNT == 0 )); then
-    echo "No valid input images found in ${TEST_ROOT}" >&2
+    echo "No valid input images found in ${INPUT_ROOT}" >&2
     exit 1
 fi
 
@@ -109,6 +126,7 @@ echo "Array job/task: ${SLURM_ARRAY_JOB_ID}/${SLURM_ARRAY_TASK_ID}"
 echo "Node: $(hostname)"
 echo "Case: ${CASE_NAME}"
 echo "Input image: ${INPUT_IMAGE}"
+echo "Input root: ${INPUT_ROOT}"
 echo "Output root: ${OUTPUT_DIR}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
 nvidia-smi

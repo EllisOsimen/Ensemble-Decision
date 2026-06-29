@@ -1,0 +1,18 @@
+{
+  "model": "swin5050",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/eval_inference/swinunetr_5050",
+  "label_space": "btcv",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 60,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.6895307463294065,
+  "macro_case_nsd": 0.5826076730039698,
+  "micro_dsc": 0.996144820521802,
+  "micro_dsc_foreground": 0.8576259744071009,
+  "macro_case_dsc_foreground": 0.5867006700121273,
+  "macro_case_nsd_foreground": 0.457084975784746,
+  "tp": 14630520320,
+  "fp": 56621568,
+  "fn": 56621568
+}

@@ -66,6 +66,8 @@ WORD_TO_SUPREM = {
 
 
 def parse_args():
+    """Collect paths, model settings, inference settings, and output options."""
+
     parser = argparse.ArgumentParser(
         description="Evaluate a downloaded SuPreM checkpoint on WORD imagesTr/labelsTr."
     )
@@ -114,6 +116,8 @@ def parse_args():
 
 
 def checkpoint_state(checkpoint):
+    """Extract the tensor dictionary from common SuPreM checkpoint formats."""
+
     for key in ("net", "state_dict"):
         if isinstance(checkpoint, dict) and key in checkpoint:
             return checkpoint[key]
@@ -121,6 +125,8 @@ def checkpoint_state(checkpoint):
 
 
 def strip_module_prefix(state):
+    """Remove DistributedDataParallel's 'module.' prefix from checkpoint keys."""
+
     return {
         (key[7:] if key.startswith("module.") else key): value
         for key, value in state.items()
@@ -285,6 +291,8 @@ def binary_metrics(prediction, gold, spacing, tolerance_mm):
 
 
 def write_csv(path, rows, fieldnames):
+    """Write rows with a stable column order so outputs are easy to compare."""
+
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -292,6 +300,8 @@ def write_csv(path, rows, fieldnames):
 
 
 def evaluate(args):
+    """Run inference on WORD cases, compare to labelsTr, and write reports."""
+
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available; pass --device cpu.")
