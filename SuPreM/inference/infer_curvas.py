@@ -162,9 +162,9 @@ def make_loader(image_path, spacing):
     transforms = Compose(
         [
             LoadImaged(keys=["image"]),
-            EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-            Orientationd(keys=["image"], axcodes="RAS"),
-            Spacingd(keys=["image"], pixdim=tuple(spacing), mode="bilinear"),
+            EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"), # Ensures a channel first [D, H, W] to [C, D, H, W] shape
+            Orientationd(keys=["image"], axcodes="RAS"), # Makes sure the orientation is consistent
+            Spacingd(keys=["image"], pixdim=tuple(spacing), mode="bilinear"), # standarises voxel spacing
             ScaleIntensityRanged(
                 keys=["image"],
                 a_min=-175,
@@ -172,8 +172,8 @@ def make_loader(image_path, spacing):
                 b_min=0.0,
                 b_max=1.0,
                 clip=True,
-            ),
-            CropForegroundd(keys=["image"], source_key="image"),
+            ), # clips intensities to a range and scales to [0,1]
+            CropForegroundd(keys=["image"], source_key="image"), # crops the foreground region
         ]
     )
 
@@ -183,6 +183,8 @@ def make_loader(image_path, spacing):
         shuffle=False,
         num_workers=0,
     )
+    # This function returns both the loader and the transforms so that we can apply the inverse transforms later to map the prediction back to the original image space.
+    # Important to note that without it prediction could be in a different space than the original image.
 
     return loader, transforms
 
@@ -190,14 +192,14 @@ def make_loader(image_path, spacing):
 def load_model(args, device):
     """Build the 14-class BTCV architecture and load the checkpoint."""
     model = SwinUNETR(
-        img_size=tuple(args.roi_size),
-        in_channels=1,
-        out_channels=len(BTCV_LABELS),
-        feature_size=48,
-        drop_rate=0.0,
-        attn_drop_rate=0.0,
-        dropout_path_rate=0.0,
-        use_checkpoint=False,
+        img_size=tuple(args.roi_size), # Image patch size to process at a time, 96x96x96 in this case (DEFAULT)
+        in_channels=1, # 1 channel for CT images
+        out_channels=len(BTCV_LABELS), # Number of output classes
+        feature_size=48, # Base feature size
+        drop_rate=0.0, # Dropout rate
+        attn_drop_rate=0.0, # Attention dropout rate
+        dropout_path_rate=0.0, # Stochastic depth rate
+        use_checkpoint=False, # Whether to use gradient checkpointing
     )
 
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
@@ -216,17 +218,17 @@ def btcv_prediction_to_curvas(prediction):
     Output:
         curvas: torch.Tensor with CURVAS labels, shape [B, 1, D, H, W]
     """
-    curvas = torch.zeros_like(prediction, dtype=torch.uint8)
+    curvas = torch.zeros_like(prediction, dtype=torch.uint8) # create empty tensor of same shape as prediction to hold CURVAS labels
 
     for btcv_label, curvas_label in BTCV_TO_CURVAS.items():
-        curvas[prediction == btcv_label] = curvas_label
+        curvas[prediction == btcv_label] = curvas_label # map each BTCV label to the corresponding CURVAS label
 
     return curvas
 
 
 def logits_to_curvas_selected_only(logits):
     """Infer only background, pancreas, kidney, and liver from BTCV logits.
-
+    This is before any argmax is applied, so we can select only the relevant channels for CURVAS.
     This compares only these effective channels:
 
         CURVAS 0 = BTCV background logit
@@ -237,10 +239,10 @@ def logits_to_curvas_selected_only(logits):
     Output:
         torch.Tensor of CURVAS labels, shape [B, 1, D, H, W]
     """
-    background_logit = logits[:, 0]
-    pancreas_logit = logits[:, 11]
-    kidney_logit = torch.maximum(logits[:, 2], logits[:, 3])
-    liver_logit = logits[:, 6]
+    background_logit = logits[:, 0] # background logit is the first channel of the logits tensor
+    pancreas_logit = logits[:, 11] # pancreas logit is the 12th channel of the logits tensor
+    kidney_logit = torch.maximum(logits[:, 2], logits[:, 3]) # kidney logit is the maximum of the 3rd and 4th channels (right and left kidney)
+    liver_logit = logits[:, 6] # liver logit is the 7th channel of the logits tensor
 
     selected_logits = torch.stack(
         [
@@ -252,13 +254,13 @@ def logits_to_curvas_selected_only(logits):
         dim=1,
     )
 
-    curvas = torch.argmax(selected_logits, dim=1, keepdim=True)
+    curvas = torch.argmax(selected_logits, dim=1, keepdim=True) # this is then used to get the voxel label
     return curvas.to(torch.uint8)
 
 
 def invert_prediction(batch, transforms, prediction):
     """Return the predicted label map to the input CT's original spatial grid."""
-    item = decollate_batch(batch)[0]
+    item = decollate_batch(batch)[0] # extracts the first item from the batch, which is a dictionary containing the image and its metadata
     source = item["image"]
 
     item["prediction"] = MetaTensor(
@@ -365,7 +367,9 @@ def main():
             overlap=args.overlap,
             mode="gaussian",
         )
+        # The logits are the raw output of the model before applying argmax to get discrete labels.
 
+        #This selected mode represents how the CURVAS labels are derived from the BTCV logits. The "all_then_remap" mode first computes the argmax over all 14 BTCV classes and then remaps the relevant classes to CURVAS labels. The "selected_only" mode directly computes the argmax over only the relevant BTCV classes that correspond to CURVAS labels.
         if args.mode == "all_then_remap":
             # First get the normal BTCV prediction over all 14 classes.
             btcv_prediction = torch.argmax(logits, dim=1, keepdim=True).to(torch.uint8)
@@ -385,8 +389,9 @@ def main():
 
         curvas_prediction = curvas_prediction.cpu()
 
+    #This inversion is needed in order to map the predicted CURVAS labels back to the original CT image space, which may have different orientation, spacing, and cropping compared to the preprocessed input used for inference. The invert_prediction function uses the stored transforms to reverse these preprocessing steps.
     restored = invert_prediction(batch, transforms, curvas_prediction)
-    restored = np.squeeze(restored, axis=0)
+    restored = np.squeeze(restored, axis=0) # gets rid of the channel dimension, resulting in a 3D array with shape [D, H, W]
 
     # The inversion may return near-integer floats, so round before saving.
     restored = np.rint(restored).astype(np.uint8)
