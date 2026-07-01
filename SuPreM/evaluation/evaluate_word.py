@@ -188,7 +188,7 @@ def make_loader(args):
         image_paths = image_paths[: args.limit]
     if not image_paths:
         raise FileNotFoundError(f"No .nii.gz images found in {image_dir}")
-
+    #create a dictionary with the image path, label path, and case name for each image in the imagesTr directory
     data = []
     for image_path in image_paths:
         label_path = label_dir / image_path.name
@@ -305,12 +305,12 @@ def evaluate(args):
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is not available; pass --device cpu.")
-
+    #configure the output directory and create a subdirectory for predictions if requested
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prediction_dir = args.output_dir / "predictions"
     if args.save_predictions:
         prediction_dir.mkdir(exist_ok=True)
-
+    #load the model and create a data loader for the WORD images
     model = load_model(args, device)
     loader, transforms = make_loader(args)
     case_rows = []
@@ -343,7 +343,7 @@ def evaluate(args):
             # Sigmoid gives an independent probability for every structure at
             # every voxel. Thresholding at 0.5 by default produces values 0/1.
             # This is not an argmax: multiple channels may be positive at a voxel.
-            masks = torch.sigmoid(logits).ge(args.threshold).to(torch.uint8).cpu()
+            masks = torch.sigmoid(logits).ge(args.threshold).to(torch.uint8).cpu() # suprem can have several overlapping masks, so we use a threshold to get binary masks for each structure
         print(
             f"{batch['case'][0]}: inference completed in "
             f"{time.perf_counter() - case_started:.1f} seconds",
@@ -368,11 +368,11 @@ def evaluate(args):
             # Select the SuPreM mask corresponding to this WORD structure.
             # For WORD's adrenal class, logical OR merges the separate right
             # and left SuPreM adrenal channels before evaluation.
-            pred_mask = np.logical_or.reduce([prediction[channel] > 0 for channel in channels])
-            gold_mask = gold == word_label
+            pred_mask = np.logical_or.reduce([prediction[channel] > 0 for channel in channels]) # where did the model predict this word label, we combine the masks for the channels corresponding to this word label
+            gold_mask = gold == word_label # this creates the gold mask for this word label, where the gold label is equal to the word label
             dsc, nsd, tp, fp, fn = binary_metrics(
                 pred_mask, gold_mask, spacing, args.nsd_tolerance_mm
-            )
+            ) # we compute the metrics
             case_rows.append(
                 {
                     "case": case_name,
