@@ -1,0 +1,4 @@
+case,pair,multiclass_kappa,exact_agreement,foreground_multiclass_kappa,foreground_exact_agreement
+UKCHLL007,annotation_1_vs_annotation_2,0.9636501727390299,0.9992598748474432,1.0,0.9304237239189034
+UKCHLL007,annotation_1_vs_annotation_3,0.960277096435641,0.9991725412226842,1.0,0.9242247163483487
+UKCHLL007,annotation_2_vs_annotation_3,0.9684240570065474,0.9993352821964493,1.0,0.9392989987979894

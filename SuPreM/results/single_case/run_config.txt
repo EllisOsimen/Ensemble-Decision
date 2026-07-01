@@ -1,0 +1,7 @@
+cases_root=/home/s2347484/Seg/testing_set
+annotations=annotation_1.nii.gz,annotation_2.nii.gz,annotation_3.nii.gz
+excluded_cases=
+nsd_tolerance_mm=1.0
+ignore_affine=False
+include_background_nsd=False
+skip_nsd=False
