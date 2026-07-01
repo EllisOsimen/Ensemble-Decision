@@ -8,7 +8,11 @@ The testing_set label space is:
   2 = kidney
   3 = liver
 
-Outputs include pairwise Dice/NSD/Cohen kappa and three-rater Fleiss kappa.
+The script treats each annotation file as a human rater. It computes:
+
+  - pairwise per-class Dice, NSD, and binary Cohen kappa
+  - pairwise whole-label-map Cohen kappa and exact agreement
+  - three-rater Fleiss kappa across all annotations
 """
 
 from __future__ import annotations
@@ -39,6 +43,8 @@ TARGET_LABELS = {
 
 
 def parse_args() -> argparse.Namespace:
+    """Collect paths and metric options from the command line."""
+
     parser = argparse.ArgumentParser(
         description=(
             "Compute human inter-rater agreement for testing_set annotations "
@@ -69,6 +75,12 @@ def parse_args() -> argparse.Namespace:
         help="Process only this case name instead of every case.",
     )
     parser.add_argument(
+        "--exclude-case",
+        action="append",
+        default=[],
+        help="Case name to exclude from the run. Can be passed multiple times.",
+    )
+    parser.add_argument(
         "--nsd-tolerance-mm",
         type=float,
         default=1.0,
@@ -93,6 +105,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) -> None:
+    """Write CSVs with stable column order for easier comparison between runs."""
+
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -100,14 +114,21 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
 
 
 def load_integer_mask(path: Path, atol: float = 1e-3) -> tuple[nib.Nifti1Image, np.ndarray]:
+    """Load a NIfTI label map and verify it uses the expected integer labels."""
+
     image = nib.load(str(path))
     data = np.asanyarray(image.dataobj)
+
+    # Some tools save integer labels in floating-point images. Accept those only
+    # if every value is very close to an integer, then round them back.
     if not np.issubdtype(data.dtype, np.integer):
         rounded = np.rint(data)
         if not np.all(np.isclose(data, rounded, rtol=0.0, atol=atol)):
             raise ValueError(f"{path} contains non-integer labels.")
         data = rounded
     data = data.astype(np.int16, copy=False)
+
+    # Human annotations should already be in the testing-set 0-3 label space.
     unknown = sorted(set(np.unique(data).astype(int)) - set(TARGET_LABELS))
     if unknown:
         raise ValueError(f"{path} contains unexpected label(s): {unknown}")
@@ -115,6 +136,8 @@ def load_integer_mask(path: Path, atol: float = 1e-3) -> tuple[nib.Nifti1Image, 
 
 
 def case_directories(root: Path) -> dict[str, Path]:
+    """Return case folders keyed by case name, e.g. UKCHLL003 -> path."""
+
     if not root.is_dir():
         raise NotADirectoryError(f"Cases root does not exist: {root}")
     cases = {path.name: path for path in root.iterdir() if path.is_dir()}
@@ -124,11 +147,16 @@ def case_directories(root: Path) -> dict[str, Path]:
 
 
 def validate_grid(case_name: str, reference_image, moving_image, moving_name: str, ignore_affine: bool) -> None:
+    """Check that two annotations can be compared voxel-by-voxel."""
+
+    # Shape equality means both arrays have the same voxel index range.
     if moving_image.shape != reference_image.shape:
         raise ValueError(
             f"{case_name}: {moving_name} shape {moving_image.shape} does not match "
             f"reference annotation shape {reference_image.shape}"
         )
+    # Affine equality means those voxel indices point to the same physical CT
+    # locations. If this fails, direct Dice/kappa/NSD can be misleading.
     if not ignore_affine and not np.allclose(
         moving_image.affine,
         reference_image.affine,
@@ -142,6 +170,12 @@ def validate_grid(case_name: str, reference_image, moving_image, moving_name: st
 
 
 def binary_counts_from_confusion(confusion: np.ndarray, label_value: int):
+    """Convert a multiclass confusion matrix into one-vs-rest counts.
+
+    For a selected label, e.g. pancreas, this treats the problem as:
+    pancreas vs not-pancreas. Those counts feed Dice and binary Cohen kappa.
+    """
+
     tp = int(confusion[label_value, label_value])
     fp = int(confusion[label_value, :].sum() - tp)
     fn = int(confusion[:, label_value].sum() - tp)
@@ -154,9 +188,13 @@ def binary_counts_from_confusion(confusion: np.ndarray, label_value: int):
 
 
 def binary_nsd(first, second, spacing, tolerance_mm):
+    """Compute normalized surface Dice for one binary class mask pair."""
+
     first = np.asarray(first, dtype=bool)
     second = np.asarray(second, dtype=bool)
 
+    # NSD needs a surface from both masks. Empty masks have no boundary, so the
+    # metric is not defined and is recorded as NaN.
     if first.any() and second.any():
         distances = surface_distance_metrics.compute_surface_distances(
             second,
@@ -175,6 +213,12 @@ def binary_nsd(first, second, spacing, tolerance_mm):
 
 
 def cohen_kappa_from_counts(confusion: np.ndarray) -> float:
+    """Compute Cohen's kappa from a confusion matrix.
+
+    Kappa measures observed agreement after subtracting agreement expected by
+    chance from the row/column label frequencies.
+    """
+
     total = int(confusion.sum())
     if total == 0:
         return math.nan
@@ -188,9 +232,16 @@ def cohen_kappa_from_counts(confusion: np.ndarray) -> float:
 
 
 def multiclass_pair_metrics(first: np.ndarray, second: np.ndarray) -> dict[str, float]:
+    """Compute whole-label-map agreement for one pair of annotators."""
+
     confusion = pair_confusion(first, second)
 
+    # Exact agreement is simply the fraction of voxels where labels match. It is
+    # useful, but background-heavy volumes can make it look very high.
     exact = float(np.trace(confusion) / confusion.sum())
+
+    # Foreground metrics focus on voxels where at least one annotator marked an
+    # organ, reducing the dominance of easy background agreement.
     foreground_union = np.logical_or(first != 0, second != 0)
     if foreground_union.any():
         foreground_exact = float((first[foreground_union] == second[foreground_union]).mean())
@@ -209,6 +260,12 @@ def multiclass_pair_metrics(first: np.ndarray, second: np.ndarray) -> dict[str, 
 
 
 def pair_confusion(first: np.ndarray, second: np.ndarray) -> np.ndarray:
+    """Build a 4x4 confusion matrix between two integer label maps.
+
+    Rows correspond to labels from the first annotator and columns to labels
+    from the second annotator. np.bincount keeps this fast on large CT volumes.
+    """
+
     encoded = (first.astype(np.int16, copy=False) * len(TARGET_LABELS)) + second
     return np.bincount(encoded.ravel(), minlength=len(TARGET_LABELS) ** 2).reshape(
         len(TARGET_LABELS),
@@ -217,12 +274,24 @@ def pair_confusion(first: np.ndarray, second: np.ndarray) -> np.ndarray:
 
 
 def fleiss_kappa(annotations: list[np.ndarray], labels: list[int], foreground_union_only: bool = False) -> float:
+    """Compute multi-rater Fleiss kappa across all annotations.
+
+    Cohen kappa is for two raters. Fleiss kappa is the corresponding chance-
+    corrected agreement measure for 3+ raters.
+    """
+
     if len(annotations) < 2:
         return math.nan
 
+    # The testing set normally has exactly three annotations. This branch avoids
+    # stacking a large 3 x X x Y x Z array and computes the observed pairwise
+    # agreement directly, which is much lighter on memory.
     if len(annotations) == 3:
         first, second, third = annotations
         include = None
+
+        # Foreground Fleiss kappa ignores voxels where all annotators marked
+        # background, which is more informative for organ segmentation.
         if foreground_union_only:
             include = np.logical_or.reduce((first != 0, second != 0, third != 0))
             n_items = int(include.sum())
@@ -236,11 +305,15 @@ def fleiss_kappa(annotations: list[np.ndarray], labels: list[int], foreground_un
             + (first == third).astype(np.uint8)
             + (second == third).astype(np.uint8)
         )
+
+        # With 3 raters there are 3 possible annotator pairs per voxel. The mean
+        # number of agreeing pairs, divided by 3, is Fleiss' observed agreement.
         if include is not None:
             p_observed = float(agree_pairs[include].mean() / 3.0)
         else:
             p_observed = float(agree_pairs.mean() / 3.0)
 
+        # Expected agreement is based on how often each label is used overall.
         category_totals = np.zeros(len(labels), dtype=np.float64)
         arrays = [array[include] if include is not None else array.ravel() for array in annotations]
         for array in arrays:
@@ -252,6 +325,8 @@ def fleiss_kappa(annotations: list[np.ndarray], labels: list[int], foreground_un
             return 1.0 if math.isclose(p_observed, 1.0) else math.nan
         return (p_observed - p_expected) / (1.0 - p_expected)
 
+    # Generic implementation for any number of annotators. It is less memory
+    # efficient, but keeps the function correct if more annotations are passed.
     stacked = np.stack(annotations, axis=0)
     if foreground_union_only:
         include = np.any(stacked != 0, axis=0)
@@ -282,11 +357,16 @@ def fleiss_kappa(annotations: list[np.ndarray], labels: list[int], foreground_un
 
 
 def summarize_pair_class_totals(totals) -> list[dict[str, object]]:
+    """Collapse per-case pair/class metrics into one summary table."""
+
     rows = []
     for pair_name in sorted(totals):
         for label_value, class_name in TARGET_LABELS.items():
             item = totals[pair_name][class_name]
             denominator = 2 * item["tp"] + item["fp"] + item["fn"]
+
+            # Rebuild the aggregate one-vs-rest confusion matrix so we can
+            # report micro kappa over all voxels/cases for this pair/class.
             confusion = np.array(
                 [[item["tn"], item["fp"]], [item["fn"], item["tp"]]],
                 dtype=np.int64,
@@ -320,6 +400,7 @@ def main() -> None:
     if len(args.annotations) < 2:
         raise ValueError("Pass at least two annotation filenames.")
 
+    # Decide which cases are in this run before loading any large NIfTI arrays.
     args.output_dir.mkdir(parents=True, exist_ok=True)
     case_dirs = case_directories(args.cases_root)
     case_names = sorted(case_dirs)
@@ -327,7 +408,13 @@ def main() -> None:
         if args.case_name not in case_dirs:
             raise FileNotFoundError(f"{args.case_name} not found in {args.cases_root}")
         case_names = [args.case_name]
+    excluded_cases = set(args.exclude_case)
+    case_names = [case_name for case_name in case_names if case_name not in excluded_cases]
+    if not case_names:
+        raise ValueError("No cases left to process after applying --case-name/--exclude-case.")
 
+    # Detailed rows keep per-case information. The totals dictionaries collect
+    # enough information to build mean-case and micro summaries at the end.
     pair_rows: list[dict[str, object]] = []
     pair_multiclass_rows: list[dict[str, object]] = []
     fleiss_rows: list[dict[str, object]] = []
@@ -339,9 +426,12 @@ def main() -> None:
     pair_multiclass_totals = defaultdict(lambda: defaultdict(list))
     fleiss_totals = defaultdict(list)
 
+    # Save the exact run settings next to the outputs so old CSVs remain
+    # interpretable later.
     with (args.output_dir / "run_config.txt").open("w") as handle:
         handle.write(f"cases_root={args.cases_root}\n")
         handle.write(f"annotations={','.join(args.annotations)}\n")
+        handle.write(f"excluded_cases={','.join(sorted(excluded_cases))}\n")
         handle.write(f"nsd_tolerance_mm={args.nsd_tolerance_mm}\n")
         handle.write(f"ignore_affine={args.ignore_affine}\n")
         handle.write(f"include_background_nsd={args.include_background_nsd}\n")
@@ -350,12 +440,17 @@ def main() -> None:
     for case_name in tqdm(case_names, desc="Human agreement"):
         case_dir = case_dirs[case_name]
         loaded = []
+
+        # Load all requested annotations for this case. Each annotation is one
+        # rater's integer label map.
         for annotation_name in args.annotations:
             path = case_dir / annotation_name
             if not path.is_file():
                 raise FileNotFoundError(f"Missing annotation file: {path}")
             loaded.append((annotation_name, *load_integer_mask(path)))
 
+        # Use the first annotation as the reference grid. All other annotations
+        # must match this grid unless --ignore-affine is explicitly used.
         reference_image = loaded[0][1]
         for annotation_name, image, _mask in loaded[1:]:
             validate_grid(case_name, reference_image, image, annotation_name, args.ignore_affine)
@@ -363,20 +458,27 @@ def main() -> None:
         spacing = tuple(float(value) for value in reference_image.header.get_zooms()[:3])
         masks_by_name = {annotation_name: mask for annotation_name, _image, mask in loaded}
 
+        # Compare each annotator pair: 1 vs 2, 1 vs 3, and 2 vs 3.
         for first_name, second_name in combinations(args.annotations, 2):
             first = masks_by_name[first_name]
             second = masks_by_name[second_name]
             pair_name = f"{first_name[:-7]}_vs_{second_name[:-7]}"
             confusion = pair_confusion(first, second)
 
+            # Whole-map pairwise metrics: multiclass kappa and exact agreement.
             multiclass = multiclass_pair_metrics(first, second)
             pair_multiclass_rows.append({"case": case_name, "pair": pair_name, **multiclass})
             for key, value in multiclass.items():
                 if not math.isnan(value):
                     pair_multiclass_totals[pair_name][key].append(value)
 
+            # Per-class metrics turn each label into a binary one-vs-rest mask.
             for label_value, class_name in TARGET_LABELS.items():
                 dsc, kappa, tp, tn, fp, fn = binary_counts_from_confusion(confusion, label_value)
+
+                # Background NSD is skipped by default because it is slow and
+                # not usually meaningful. Foreground NSD can also be skipped for
+                # fast kappa/Dice-only runs.
                 if not args.skip_nsd and (label_value != 0 or args.include_background_nsd):
                     nsd = binary_nsd(
                         first == label_value,
@@ -416,6 +518,7 @@ def main() -> None:
                 if not math.isnan(kappa):
                     item["binary_kappa"].append(kappa)
 
+        # Fleiss kappa evaluates all human annotations together, not pairwise.
         annotations = [masks_by_name[name] for name in args.annotations]
         case_fleiss = {
             "case": case_name,
@@ -431,6 +534,7 @@ def main() -> None:
             if not math.isnan(case_fleiss[key]):
                 fleiss_totals[key].append(case_fleiss[key])
 
+    # Build the run-level summary tables after all cases have contributed rows.
     pair_summary_rows = summarize_pair_class_totals(pair_totals)
     pair_multiclass_summary_rows = []
     for pair_name in sorted(pair_multiclass_totals):
@@ -446,9 +550,12 @@ def main() -> None:
             row[f"cases_with_{key}"] = len(values)
         pair_multiclass_summary_rows.append(row)
 
+    # Overall JSON is intentionally compact: it highlights the multi-rater
+    # agreement numbers most useful as a human-human baseline.
     overall = {
         "cases_root": str(args.cases_root),
         "annotations": args.annotations,
+        "excluded_cases": sorted(excluded_cases),
         "cases": len(case_names),
         "nsd_tolerance_mm": args.nsd_tolerance_mm,
         "mean_case_fleiss_kappa": (

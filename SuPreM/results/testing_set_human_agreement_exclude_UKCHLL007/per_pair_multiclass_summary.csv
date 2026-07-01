@@ -1,0 +1,4 @@
+pair,mean_case_multiclass_kappa,cases_with_multiclass_kappa,mean_case_exact_agreement,cases_with_exact_agreement,mean_case_foreground_multiclass_kappa,cases_with_foreground_multiclass_kappa,mean_case_foreground_exact_agreement,cases_with_foreground_exact_agreement
+annotation_1_vs_annotation_2,0.9748407724745093,64,0.9992844651235955,64,0.9997481477733399,64,0.9516598746602503,64
+annotation_1_vs_annotation_3,0.9598192668503198,64,0.9991080905051262,64,0.9997613211608792,64,0.9364782626037057,64
+annotation_2_vs_annotation_3,0.9666842855926762,64,0.9993255116658804,64,0.9997421514010675,64,0.9494304008861452,64
