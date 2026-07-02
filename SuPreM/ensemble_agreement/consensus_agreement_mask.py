@@ -8,7 +8,7 @@ The consensus behavior follows ``Agreement.MD``:
   * 2 matching background labels -> background, unless the single organ vote is
     connected to a stronger consensus region of the same organ
   * all labels different -> choose a locally supported label, otherwise mark
-    uncertain
+    uncertain or fall back to CLIP Universal U-Net
 """
 
 from __future__ import annotations
@@ -92,7 +92,25 @@ def parse_args() -> argparse.Namespace:
         "--uncertain-label",
         type=int,
         default=DEFAULT_UNCERTAIN_LABEL,
-        help="Output value for all-disagree voxels without strong local evidence.",
+        help=(
+            "Output value for all-disagree voxels without strong local evidence "
+            "when CLIP fallback is disabled or unavailable."
+        ),
+    )
+    parser.add_argument(
+        "--clip-fallback-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Model directory to use when consensus and local support abstain. "
+            "The directory must be one of the three prediction directories. "
+            "If omitted, a directory with 'clip' in its name is detected automatically."
+        ),
+    )
+    parser.add_argument(
+        "--no-clip-fallback",
+        action="store_true",
+        help="Keep unresolved all-disagree voxels as --uncertain-label instead of using CLIP fallback.",
     )
     parser.add_argument(
         "--local-radius",
@@ -196,6 +214,44 @@ def discover_model_dirs(
             f"found {len(model_dirs)} ({names}). Use --model-dir to choose them explicitly."
         )
     return model_dirs
+
+
+def clip_fallback_index(
+    model_dirs: list[Path],
+    explicit_clip_fallback_dir: Path | None,
+    prediction_root: Path,
+    disabled: bool,
+) -> int | None:
+    if disabled:
+        return None
+
+    if explicit_clip_fallback_dir is not None:
+        fallback_dir = resolve_path(explicit_clip_fallback_dir, prediction_root).resolve()
+        matches = [
+            index
+            for index, model_dir in enumerate(model_dirs)
+            if model_dir.resolve() == fallback_dir
+        ]
+        if not matches:
+            raise ValueError(
+                "--clip-fallback-dir must match one of the three prediction directories."
+            )
+        return matches[0]
+
+    candidates = [
+        index
+        for index, model_dir in enumerate(model_dirs)
+        if "clip" in model_dir.name.lower()
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        names = ", ".join(model_dirs[index].name for index in candidates)
+        raise ValueError(
+            f"Multiple CLIP-like model directories found ({names}); pass "
+            "--clip-fallback-dir to choose one."
+        )
+    return None
 
 
 def nifti_files(directory: Path) -> dict[str, Path]:
@@ -410,10 +466,15 @@ def consensus_agreement_mask(
     min_local_margin: float = 3.0,
     min_local_support: float = 3.0,
     connectivity: int = 3,
+    clip_fallback: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     shapes = {array.shape for array in (first, second, third)}
     if len(shapes) != 1:
         raise ValueError(f"Prediction shapes differ: {sorted(shapes)}")
+    if clip_fallback is not None and clip_fallback.shape != first.shape:
+        raise ValueError(
+            f"CLIP fallback shape {clip_fallback.shape} does not match prediction shape {first.shape}"
+        )
 
     unanimous, pair_agrees, pair_label, all_disagree = pairwise_majority(first, second, third)
 
@@ -451,6 +512,10 @@ def consensus_agreement_mask(
     )
     consensus[local_accept] = local_labels[local_accept]
     confidence[local_accept] = 4
+
+    if clip_fallback is not None:
+        unresolved = all_disagree & ~local_accept
+        consensus[unresolved] = clip_fallback[unresolved]
 
     return consensus, confidence
 
@@ -520,9 +585,21 @@ def main() -> None:
         output_dir,
         confidence_dir,
     )
+    fallback_index = clip_fallback_index(
+        model_dirs,
+        args.clip_fallback_dir,
+        args.prediction_root,
+        args.no_clip_fallback,
+    )
     print("Using prediction directories:")
-    for directory, weight in zip(model_dirs, args.weights):
-        print(f"  {directory} (local weight={weight:g})")
+    for index, (directory, weight) in enumerate(zip(model_dirs, args.weights)):
+        fallback_note = " + CLIP fallback" if index == fallback_index else ""
+        print(f"  {directory} (local weight={weight:g}){fallback_note}")
+    if fallback_index is None:
+        print(
+            "CLIP fallback disabled or not auto-detected; unresolved voxels "
+            f"will remain {args.uncertain_label}."
+        )
 
     files_by_model, case_names = matching_cases(model_dirs, args.case_name, args.strict)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -552,12 +629,17 @@ def main() -> None:
             min_local_margin=args.min_local_margin,
             min_local_support=args.min_local_support,
             connectivity=args.connectivity,
+            clip_fallback=predictions[fallback_index] if fallback_index is not None else None,
         )
         save_mask(
             consensus,
             images[0],
             output_path,
-            f"Consensus mask; uncertain={args.uncertain_label}",
+            (
+                f"Consensus mask; clip fallback={model_dirs[fallback_index].name}"
+                if fallback_index is not None
+                else f"Consensus mask; uncertain={args.uncertain_label}"
+            ),
         )
         if confidence_path is not None:
             save_mask(

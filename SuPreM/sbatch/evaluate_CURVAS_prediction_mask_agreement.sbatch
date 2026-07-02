@@ -61,8 +61,6 @@ python -c "import nibabel, numpy, surface_distance, tqdm" || {
 CMD=(
     python -u evaluation/evaluate_prediction_mask_agreement.py
     --output-dir "${OUTPUT_DIR}"
-    --skip-nsd
-    --skip-fleiss
 )
 
 for MODEL_SPEC in "${MODEL_SPECS[@]}"; do

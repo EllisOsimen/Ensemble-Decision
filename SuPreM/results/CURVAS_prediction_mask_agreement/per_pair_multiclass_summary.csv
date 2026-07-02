@@ -1,0 +1,4 @@
+pair,mean_case_multiclass_kappa,cases_with_multiclass_kappa,mean_case_exact_agreement,cases_with_exact_agreement,mean_case_foreground_multiclass_kappa,cases_with_foreground_multiclass_kappa,mean_case_foreground_exact_agreement,cases_with_foreground_exact_agreement
+clip_unet_vs_segresnet,0.6448044705220778,60,0.9920702907449787,60,0.9857846976269982,60,0.4888244517134018,60
+swin5050_vs_clip_unet,0.838829944352384,60,0.9953061758816323,60,0.9313781205587011,60,0.729815992916477,60
+swin5050_vs_segresnet,0.5487678366215628,60,0.990640397201947,60,0.9697248619320987,60,0.39293725234027743,60
