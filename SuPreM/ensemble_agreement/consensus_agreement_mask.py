@@ -25,6 +25,46 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 DEFAULT_PREDICTION_ROOT = PROJECT_DIR / "results" / "CURVAS_INFERENCE"
 DEFAULT_UNCERTAIN_LABEL = 255
+SUPPORTED_LABEL_SPACES = {"target", "btcv", "suprem"}
+
+
+BTCV_TO_TARGET = {
+    0: 0,
+    1: 0,  # spleen
+    2: 2,  # right kidney
+    3: 2,  # left kidney
+    4: 0,  # gallbladder
+    5: 0,  # esophagus
+    6: 3,  # liver
+    7: 0,  # stomach
+    8: 0,  # aorta
+    9: 0,  # inferior vena cava
+    10: 0,  # portal/splenic veins
+    11: 1,  # pancreas
+    12: 0,  # adrenal
+    13: 0,  # adrenal
+}
+
+
+SUPREM_TO_TARGET = {
+    0: 0,
+    1: 3,  # liver
+    2: 0,  # spleen
+    3: 2,  # left kidney
+    4: 2,  # right kidney
+    5: 0,  # stomach
+    6: 0,  # gallbladder
+    7: 0,  # esophagus
+    8: 1,  # pancreas
+    9: 0,  # duodenum
+    10: 0,  # colon
+    11: 0,  # intestine
+    12: 0,  # adrenal
+    13: 0,  # rectum
+    14: 0,  # bladder
+    15: 0,  # head_of_femur_left
+    16: 0,  # head_of_femur_right
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +94,18 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Prediction directory for one model. Repeat exactly three times. "
             "Relative paths are resolved under prediction_root."
+        ),
+    )
+    parser.add_argument(
+        "--label-space",
+        dest="label_spaces",
+        choices=sorted(SUPPORTED_LABEL_SPACES),
+        action="append",
+        default=None,
+        help=(
+            "Label space for one --model-dir, in the same order. Use target for "
+            "already-remapped 0-3 masks, btcv for Swin/BTCV labels, and suprem "
+            "for SuPreM/WORD labels. If omitted, all models are treated as target."
         ),
     )
     parser.add_argument(
@@ -322,7 +374,40 @@ def load_integer_mask(path: Path):
         if not np.all(np.isclose(data, rounded, rtol=0.0, atol=1e-3)):
             raise ValueError(f"{path} contains non-integer labels.")
         data = rounded
-    return image, data.astype(np.int32, copy=False)
+    return image, data.astype(np.int16, copy=False)
+
+
+def remap_lookup(prediction: np.ndarray, lookup: dict[int, int], case_name: str, model_name: str) -> np.ndarray:
+    unique_labels = np.unique(prediction).astype(int)
+    unknown = sorted(set(unique_labels) - set(lookup))
+    if unknown:
+        raise ValueError(f"{case_name}: unexpected label(s) in {model_name}: {unknown}")
+
+    table = np.zeros(max(lookup) + 1, dtype=np.int16)
+    for source_label, target_label in lookup.items():
+        table[source_label] = target_label
+    return table[prediction]
+
+
+def remap_prediction_to_target(
+    prediction: np.ndarray,
+    label_space: str,
+    case_name: str,
+    model_name: str,
+) -> np.ndarray:
+    """Normalize one model prediction into 0=bg, 1=pancreas, 2=kidney, 3=liver."""
+
+    if label_space == "target":
+        unique_labels = np.unique(prediction).astype(int)
+        unknown = sorted(set(unique_labels) - {0, 1, 2, 3})
+        if unknown:
+            raise ValueError(f"{case_name}: unexpected target label(s) in {model_name}: {unknown}")
+        return prediction.astype(np.int16, copy=False)
+    if label_space == "btcv":
+        return remap_lookup(prediction, BTCV_TO_TARGET, case_name, model_name)
+    if label_space == "suprem":
+        return remap_lookup(prediction, SUPREM_TO_TARGET, case_name, model_name)
+    raise ValueError(f"Unsupported label space for {model_name}: {label_space}")
 
 
 def validate_spatial_grid(
@@ -358,7 +443,7 @@ def pairwise_majority(first: np.ndarray, second: np.ndarray, third: np.ndarray):
     second_third = second == third
 
     pair_agrees = first_second | first_third | second_third
-    pair_label = np.zeros(first.shape, dtype=np.int32)
+    pair_label = np.zeros(first.shape, dtype=first.dtype)
     pair_label[first_second] = first[first_second]
     pair_label[first_third] = first[first_third]
     pair_label[second_third] = second[second_third]
@@ -401,7 +486,7 @@ def connected_single_organ_votes(
 
 
 def local_label_decisions(
-    predictions: np.ndarray,
+    predictions: tuple[np.ndarray, np.ndarray, np.ndarray],
     all_disagree: np.ndarray,
     weights: tuple[float, float, float],
     local_radius: int,
@@ -410,42 +495,49 @@ def local_label_decisions(
 ) -> tuple[np.ndarray, np.ndarray]:
     if local_radius < 0:
         raise ValueError("--local-radius must be non-negative.")
-    if len(weights) != predictions.shape[0]:
+    if len(weights) != len(predictions):
         raise ValueError("Number of weights must match number of predictions.")
+    if len({prediction.shape for prediction in predictions}) != 1:
+        raise ValueError("All predictions must have the same shape.")
 
-    labels = sorted(int(label) for label in np.unique(predictions))
+    output_shape = predictions[0].shape
+    label_values = set()
+    for prediction in predictions:
+        label_values.update(int(label) for label in np.unique(prediction))
+    labels = sorted(label_values)
     if not labels or not all_disagree.any():
-        return np.zeros(predictions.shape[1:], dtype=np.int32), np.zeros(
-            predictions.shape[1:],
-            dtype=bool,
-        )
+        return np.zeros(output_shape, dtype=np.int16), np.zeros(output_shape, dtype=bool)
 
     footprint = np.ones(
-        (2 * local_radius + 1,) * (predictions.ndim - 1),
+        (2 * local_radius + 1,) * predictions[0].ndim,
         dtype=np.float32,
     )
-    support_maps = []
-    present_maps = []
+
+    # Keep only the best and second-best label scores instead of stacking one
+    # full-volume support map per label. This preserves the decision rule but
+    # avoids a large support_stack allocation for every case.
+    top_score = np.full(output_shape, -np.inf, dtype=np.float32)
+    second_score = np.full(output_shape, -np.inf, dtype=np.float32)
+    top_labels = np.zeros(output_shape, dtype=np.int16)
+
     for label in labels:
-        support = np.zeros(predictions.shape[1:], dtype=np.float32)
+        support = np.zeros(output_shape, dtype=np.float32)
+        present = np.zeros(output_shape, dtype=bool)
         for prediction, weight in zip(predictions, weights):
-            label_votes = (prediction == label).astype(np.float32, copy=False) * weight
+            label_mask = prediction == label
+            present |= label_mask
+            label_votes = label_mask.astype(np.float32, copy=False) * weight
             support += ndimage.convolve(label_votes, footprint, mode="constant", cval=0.0)
-        support_maps.append(support)
-        present_maps.append(np.any(predictions == label, axis=0))
 
-    support_stack = np.stack(support_maps, axis=0)
-    present_stack = np.stack(present_maps, axis=0)
-    candidate_scores = np.where(present_stack, support_stack, -np.inf)
+        support[~present] = -np.inf
+        better = support > top_score
+        second_score[better] = top_score[better]
+        top_score[better] = support[better]
+        top_labels[better] = label
 
-    top_index = np.argmax(candidate_scores, axis=0)
-    top_score = np.take_along_axis(candidate_scores, top_index[None, ...], axis=0)[0]
-    if len(labels) == 1:
-        second_score = np.full(top_score.shape, -np.inf, dtype=np.float32)
-    else:
-        second_score = np.partition(candidate_scores, -2, axis=0)[-2]
+        second_better = (~better) & (support > second_score)
+        second_score[second_better] = support[second_better]
 
-    top_labels = np.asarray(labels, dtype=np.int32)[top_index]
     accepted = (
         all_disagree
         & np.isfinite(top_score)
@@ -453,6 +545,21 @@ def local_label_decisions(
         & ((top_score - second_score) >= min_local_margin)
     )
     return top_labels, accepted
+
+
+def expanded_mask_slices(mask: np.ndarray, radius: int) -> tuple[slice, ...] | None:
+    """Return the bounding box of true voxels, padded by local radius."""
+
+    coordinates = np.where(mask)
+    if len(coordinates) == 0 or coordinates[0].size == 0:
+        return None
+
+    slices = []
+    for axis_coordinates, axis_size in zip(coordinates, mask.shape):
+        start = max(int(axis_coordinates.min()) - radius, 0)
+        stop = min(int(axis_coordinates.max()) + radius + 1, axis_size)
+        slices.append(slice(start, stop))
+    return tuple(slices)
 
 
 def consensus_agreement_mask(
@@ -478,7 +585,12 @@ def consensus_agreement_mask(
 
     unanimous, pair_agrees, pair_label, all_disagree = pairwise_majority(first, second, third)
 
-    consensus = np.full(first.shape, uncertain_label, dtype=np.int32)
+    consensus_dtype = (
+        np.int16
+        if np.iinfo(np.int16).min <= uncertain_label <= np.iinfo(np.int16).max
+        else np.int32
+    )
+    consensus = np.full(first.shape, uncertain_label, dtype=consensus_dtype)
     confidence = np.full(first.shape, 5, dtype=np.uint8)
 
     consensus[unanimous] = first[unanimous]
@@ -501,20 +613,27 @@ def consensus_agreement_mask(
         connectivity,
     )
 
-    predictions = np.stack((first, second, third), axis=0)
-    local_labels, local_accept = local_label_decisions(
-        predictions,
-        all_disagree,
-        weights,
-        local_radius,
-        min_local_margin,
-        min_local_support,
-    )
-    consensus[local_accept] = local_labels[local_accept]
-    confidence[local_accept] = 4
+    local_slices = expanded_mask_slices(all_disagree, local_radius)
+    local_accept = None
+    if local_slices is not None:
+        local_labels, local_accept = local_label_decisions(
+            (first[local_slices], second[local_slices], third[local_slices]),
+            all_disagree[local_slices],
+            weights,
+            local_radius,
+            min_local_margin,
+            min_local_support,
+        )
+        consensus_crop = consensus[local_slices]
+        confidence_crop = confidence[local_slices]
+        consensus_crop[local_accept] = local_labels[local_accept]
+        confidence_crop[local_accept] = 4
 
     if clip_fallback is not None:
-        unresolved = all_disagree & ~local_accept
+        unresolved = all_disagree.copy()
+        if local_slices is not None and local_accept is not None:
+            unresolved_crop = unresolved[local_slices]
+            unresolved_crop[local_accept] = False
         consensus[unresolved] = clip_fallback[unresolved]
 
     return consensus, confidence
@@ -585,6 +704,13 @@ def main() -> None:
         output_dir,
         confidence_dir,
     )
+    if args.label_spaces is None:
+        label_spaces = ["target"] * len(model_dirs)
+    elif len(args.label_spaces) != len(model_dirs):
+        raise ValueError("Pass one --label-space value for each model directory.")
+    else:
+        label_spaces = args.label_spaces
+
     fallback_index = clip_fallback_index(
         model_dirs,
         args.clip_fallback_dir,
@@ -592,9 +718,9 @@ def main() -> None:
         args.no_clip_fallback,
     )
     print("Using prediction directories:")
-    for index, (directory, weight) in enumerate(zip(model_dirs, args.weights)):
+    for index, (directory, weight, label_space) in enumerate(zip(model_dirs, args.weights, label_spaces)):
         fallback_note = " + CLIP fallback" if index == fallback_index else ""
-        print(f"  {directory} (local weight={weight:g}){fallback_note}")
+        print(f"  {directory} (label_space={label_space}, local weight={weight:g}){fallback_note}")
     if fallback_index is None:
         print(
             "CLIP fallback disabled or not auto-detected; unresolved voxels "
@@ -618,7 +744,10 @@ def main() -> None:
 
         loaded = [load_integer_mask(files[case_name]) for files in files_by_model]
         images = [image for image, _ in loaded]
-        predictions = [data for _, data in loaded]
+        predictions = [
+            remap_prediction_to_target(data, label_space, case_name, model_dir.name)
+            for (model_dir, label_space, (_image, data)) in zip(model_dirs, label_spaces, loaded)
+        ]
         validate_spatial_grid(case_name, images, args.ignore_affine)
 
         consensus, confidence = consensus_agreement_mask(

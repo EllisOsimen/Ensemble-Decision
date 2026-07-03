@@ -5,10 +5,10 @@
     "segresnet=/home/s2347484/Seg/SuPreM/results/CURVAS_INFERENCE/suprem_segresnet:suprem"
   ],
   "excluded_cases": [],
-  "cases": 60,
+  "cases": 61,
   "nsd_tolerance_mm": 1.0,
-  "mean_case_fleiss_kappa": NaN,
-  "mean_case_foreground_fleiss_kappa": NaN,
-  "cases_with_fleiss_kappa": 0,
-  "cases_with_foreground_fleiss_kappa": 0
+  "mean_case_fleiss_kappa": 0.6893725163064016,
+  "mean_case_foreground_fleiss_kappa": 0.2265875901680859,
+  "cases_with_fleiss_kappa": 61,
+  "cases_with_foreground_fleiss_kappa": 61
 }

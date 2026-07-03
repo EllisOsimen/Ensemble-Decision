@@ -3,8 +3,8 @@
 #SBATCH --partition=Teaching
 #SBATCH --nodelist=saxa
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --mem=256G
+#SBATCH --time=1-00:00:00
 #SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.out
 #SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.err
 
@@ -75,8 +75,11 @@ CMD=(
     python -u ensemble_agreement/consensus_agreement_mask.py
     "${PREDICTION_ROOT}"
     --model-dir swinunetr_5050
+    --label-space btcv
     --model-dir clip_universal_unet
+    --label-space suprem
     --model-dir suprem_segresnet
+    --label-space suprem
     --clip-fallback-dir clip_universal_unet
     --output-dir "${OUTPUT_DIR}"
     --confidence-dir "${CONFIDENCE_DIR}"
