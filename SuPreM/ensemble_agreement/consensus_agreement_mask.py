@@ -9,6 +9,9 @@ The consensus behavior follows ``Agreement.MD``:
     connected to a stronger consensus region of the same organ
   * all labels different -> choose a locally supported label, otherwise mark
     uncertain or fall back to CLIP Universal U-Net
+
+Use ``--consensus-mode weighted`` to switch to organ-aware foreground thresholds.
+The default is ``legacy`` so existing command lines keep the same behavior.
 """
 
 from __future__ import annotations
@@ -26,6 +29,43 @@ PROJECT_DIR = SCRIPT_DIR.parent
 DEFAULT_PREDICTION_ROOT = PROJECT_DIR / "results" / "CURVAS_INFERENCE"
 DEFAULT_UNCERTAIN_LABEL = 255
 SUPPORTED_LABEL_SPACES = {"target", "btcv", "suprem"}
+SUPPORTED_CONSENSUS_MODES = {"legacy", "weighted"}
+SUPPORTED_MODEL_IDS = {"clip_unet", "segresnet", "swin5050"}
+
+
+DEFAULT_ORGAN_WEIGHTS = {
+    1: {  # pancreas
+        "clip_unet": 0.5921275842936745,
+        "segresnet": 0.7320385634205714,
+        "swin5050": 0.30990320036218405,
+    },
+    2: {  # kidney
+        "clip_unet": 0.8425745728384174,
+        "segresnet": 0.894132310726161,
+        "swin5050": 0.5285563309699496,
+    },
+    3: {  # liver
+        "clip_unet": 0.9404378784429687,
+        "segresnet": 0.5893239540504726,
+        "swin5050": 0.9216424787042481,
+    },
+}
+DEFAULT_WEAK_THRESHOLDS = {
+    1: 0.55,  # pancreas
+    2: 0.75,  # kidney
+    3: 0.90,  # liver
+}
+DEFAULT_STRONG_THRESHOLDS = {
+    1: 0.65,  # pancreas
+    2: 0.85,  # kidney
+    3: 1.20,  # liver
+}
+ORGAN_LABELS = (1, 2, 3)
+ORGAN_NAMES = {
+    1: "pancreas",
+    2: "kidney",
+    3: "liver",
+}
 
 
 BTCV_TO_TARGET = {
@@ -109,6 +149,43 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--consensus-mode",
+        choices=sorted(SUPPORTED_CONSENSUS_MODES),
+        default="legacy",
+        help=(
+            "Consensus rule to use. legacy preserves the original majority/local "
+            "decision behavior; weighted enables organ-aware foreground thresholds."
+        ),
+    )
+    parser.add_argument(
+        "--model-id",
+        dest="model_ids",
+        choices=sorted(SUPPORTED_MODEL_IDS),
+        action="append",
+        default=None,
+        help=(
+            "Model identity for one --model-dir, in the same order. Repeat exactly "
+            "three times for weighted mode. If omitted in weighted mode, IDs are "
+            "inferred from directory names containing clip, segresnet, or swin."
+        ),
+    )
+    parser.add_argument(
+        "--weak-thresholds",
+        type=float,
+        nargs=3,
+        default=tuple(DEFAULT_WEAK_THRESHOLDS[label] for label in ORGAN_LABELS),
+        metavar=("PANCREAS", "KIDNEY", "LIVER"),
+        help="Weighted-mode weak foreground thresholds for pancreas, kidney, and liver.",
+    )
+    parser.add_argument(
+        "--strong-thresholds",
+        type=float,
+        nargs=3,
+        default=tuple(DEFAULT_STRONG_THRESHOLDS[label] for label in ORGAN_LABELS),
+        metavar=("PANCREAS", "KIDNEY", "LIVER"),
+        help="Weighted-mode strong foreground thresholds for pancreas, kidney, and liver.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -156,13 +233,18 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Model directory to use when consensus and local support abstain. "
             "The directory must be one of the three prediction directories. "
-            "If omitted, a directory with 'clip' in its name is detected automatically."
+            "If omitted in legacy mode, a directory with 'clip' in its name is "
+            "detected automatically. In weighted mode, CLIP fallback is used only "
+            "when this option is passed explicitly and can reintroduce CLIP bias."
         ),
     )
     parser.add_argument(
         "--no-clip-fallback",
         action="store_true",
-        help="Keep unresolved all-disagree voxels as --uncertain-label instead of using CLIP fallback.",
+        help=(
+            "Keep unresolved all-disagree voxels as --uncertain-label in legacy "
+            "mode, or as background in weighted mode, instead of using CLIP fallback."
+        ),
     )
     parser.add_argument(
         "--local-radius",
@@ -214,8 +296,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Optional directory for confidence maps with labels "
-            "1=high, 2=medium, 3=medium-low, 4=low, 5=very-low/uncertain."
+            "Optional directory for confidence maps. Weighted labels are "
+            "1=unanimous strong organ, 2=non-unanimous strong weighted organ, "
+            "3=weak connected organ, 5=background/default. Legacy labels are "
+            "1=high, 2=medium, 3=medium-low, 4=low local decision, "
+            "5=very-low/uncertain."
         ),
     )
     return parser.parse_args()
@@ -266,6 +351,93 @@ def discover_model_dirs(
             f"found {len(model_dirs)} ({names}). Use --model-dir to choose them explicitly."
         )
     return model_dirs
+
+
+def infer_model_id(model_dir: Path) -> str | None:
+    name = model_dir.name.lower()
+    if "clip" in name:
+        return "clip_unet"
+    if "segresnet" in name:
+        return "segresnet"
+    if "swin" in name:
+        return "swin5050"
+    return None
+
+
+def resolve_model_ids(
+    model_dirs: list[Path],
+    explicit_model_ids: list[str] | None,
+) -> tuple[str, str, str]:
+    if explicit_model_ids is not None:
+        if len(explicit_model_ids) != len(model_dirs):
+            raise ValueError("Pass exactly three --model-id values, matching --model-dir order.")
+        model_ids = explicit_model_ids
+    else:
+        inferred = [infer_model_id(model_dir) for model_dir in model_dirs]
+        missing = [
+            model_dir.name
+            for model_dir, model_id in zip(model_dirs, inferred)
+            if model_id is None
+        ]
+        if missing:
+            raise ValueError(
+                "Could not infer --model-id for "
+                f"{', '.join(missing)}. Pass --model-id clip_unet, segresnet, "
+                "and swin5050 in --model-dir order."
+            )
+        model_ids = [model_id for model_id in inferred if model_id is not None]
+
+    unknown = sorted(set(model_ids) - SUPPORTED_MODEL_IDS)
+    if unknown:
+        raise ValueError(f"Unknown --model-id value(s): {unknown}")
+    if len(set(model_ids)) != len(model_ids):
+        raise ValueError(f"Duplicate --model-id values are not allowed: {model_ids}")
+    if len(model_ids) != 3:
+        raise ValueError("Weighted consensus expects exactly three model IDs.")
+    return model_ids[0], model_ids[1], model_ids[2]
+
+
+def thresholds_from_values(values: tuple[float, float, float] | list[float]) -> dict[int, float]:
+    if len(values) != len(ORGAN_LABELS):
+        raise ValueError("Pass three thresholds: PANCREAS KIDNEY LIVER.")
+    return {label: float(value) for label, value in zip(ORGAN_LABELS, values)}
+
+
+def resolve_weighted_thresholds(
+    weak_values: tuple[float, float, float] | list[float],
+    strong_values: tuple[float, float, float] | list[float],
+) -> tuple[dict[int, float], dict[int, float]]:
+    weak_thresholds = thresholds_from_values(weak_values)
+    strong_thresholds = thresholds_from_values(strong_values)
+    invalid = [
+        label
+        for label in ORGAN_LABELS
+        if weak_thresholds[label] > strong_thresholds[label]
+    ]
+    if invalid:
+        raise ValueError(
+            "Each weak threshold must be <= the matching strong threshold; "
+            f"invalid organ label(s): {invalid}"
+        )
+    return weak_thresholds, strong_thresholds
+
+
+def print_weighted_settings(
+    model_ids: tuple[str, str, str],
+    organ_weights: dict[int, dict[str, float]],
+    weak_thresholds: dict[int, float],
+    strong_thresholds: dict[int, float],
+) -> None:
+    print("Weighted organ settings:")
+    for label in ORGAN_LABELS:
+        weight_summary = ", ".join(
+            f"{model_id}={organ_weights[label][model_id]:.6g}"
+            for model_id in model_ids
+        )
+        print(
+            f"  {ORGAN_NAMES[label]}: weak={weak_thresholds[label]:.6g}, "
+            f"strong={strong_thresholds[label]:.6g}, weights=({weight_summary})"
+        )
 
 
 def clip_fallback_index(
@@ -639,6 +811,119 @@ def consensus_agreement_mask(
     return consensus, confidence
 
 
+def connected_weak_organ_candidates(
+    consensus: np.ndarray,
+    confidence: np.ndarray,
+    weak_candidates: dict[int, np.ndarray],
+    connectivity: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    structure = make_structure(consensus.ndim, connectivity)
+    accepted_count = np.zeros(consensus.shape, dtype=np.uint8)
+    accepted_label = np.zeros(consensus.shape, dtype=np.int16)
+
+    for label in ORGAN_LABELS:
+        candidates = weak_candidates[label] & (confidence == 5)
+        strong_same_label = (consensus == label) & (confidence <= 2)
+        if not candidates.any() or not strong_same_label.any():
+            continue
+
+        components, _ = ndimage.label(candidates | strong_same_label, structure=structure)
+        connected_ids = np.unique(components[strong_same_label])
+        connected_ids = connected_ids[connected_ids != 0]
+        if connected_ids.size == 0:
+            continue
+
+        accepted = candidates & np.isin(components, connected_ids)
+        accepted_count[accepted] += 1
+        accepted_label[accepted] = label
+
+    return accepted_label, accepted_count == 1
+
+
+def weighted_threshold_consensus(
+    predictions: tuple[np.ndarray, np.ndarray, np.ndarray],
+    model_ids: tuple[str, str, str],
+    organ_weights: dict[int, dict[str, float]],
+    weak_thresholds: dict[int, float],
+    strong_thresholds: dict[int, float],
+    connectivity: int = 3,
+    uncertain_label: int = DEFAULT_UNCERTAIN_LABEL,
+) -> tuple[np.ndarray, np.ndarray]:
+    if len({prediction.shape for prediction in predictions}) != 1:
+        raise ValueError("All predictions must have the same shape.")
+    if len(model_ids) != len(predictions):
+        raise ValueError("Number of model IDs must match number of predictions.")
+    unknown_ids = sorted(set(model_ids) - SUPPORTED_MODEL_IDS)
+    if unknown_ids:
+        raise ValueError(f"Unknown model ID(s): {unknown_ids}")
+    if len(set(model_ids)) != len(model_ids):
+        raise ValueError(f"Duplicate model IDs are not allowed: {model_ids}")
+
+    del uncertain_label  # Weighted mode resolves abstentions to background by design.
+
+    output_shape = predictions[0].shape
+    scores = np.zeros((len(ORGAN_LABELS),) + output_shape, dtype=np.float32)
+
+    # Background is intentionally not scored as a class: it is the default when
+    # no foreground organ has enough model-specific evidence to pass threshold.
+    for organ_index, organ_label in enumerate(ORGAN_LABELS):
+        per_model_weights = organ_weights[organ_label]
+        for prediction, model_id in zip(predictions, model_ids):
+            scores[organ_index][prediction == organ_label] += per_model_weights[model_id]
+
+    best_score = scores.max(axis=0)
+    best_organ_index = np.argmax(scores, axis=0)
+    best_organ_label = np.take(np.asarray(ORGAN_LABELS, dtype=np.int16), best_organ_index)
+    tied_best = np.count_nonzero(scores == best_score, axis=0) > 1
+    unique_best = ~tied_best
+
+    consensus = np.zeros(output_shape, dtype=np.int16)
+    confidence = np.full(output_shape, 5, dtype=np.uint8)
+
+    weak_candidates: dict[int, np.ndarray] = {}
+    for organ_index, organ_label in enumerate(ORGAN_LABELS):
+        organ_score = scores[organ_index]
+
+        # Thresholds are organ-specific because the CURVAS evaluation showed
+        # different reliability profiles for pancreas, kidney, and liver.
+        strong = (
+            unique_best
+            & (best_organ_label == organ_label)
+            & (organ_score > 0.0)
+            & (organ_score >= strong_thresholds[organ_label])
+        )
+        consensus[strong] = organ_label
+
+        unanimous_foreground = np.logical_and.reduce(
+            [prediction == organ_label for prediction in predictions]
+        )
+        confidence[strong & unanimous_foreground] = 1
+        confidence[strong & ~unanimous_foreground] = 2
+
+        weak_candidates[organ_label] = (
+            (organ_score == best_score)
+            & (organ_score > 0.0)
+            & (organ_score >= weak_thresholds[organ_label])
+            & (
+                (organ_score < strong_thresholds[organ_label])
+                | tied_best
+            )
+        )
+
+    # Weak voxels are accepted only when connected to a strong component of the
+    # same organ, which keeps isolated low-confidence foreground from growing.
+    accepted_label, accepted = connected_weak_organ_candidates(
+        consensus,
+        confidence,
+        weak_candidates,
+        connectivity,
+    )
+    consensus[accepted] = accepted_label[accepted]
+    confidence[accepted] = 3
+
+    return consensus, confidence
+
+
 def output_dtype(data: np.ndarray) -> np.dtype:
     data_min = int(data.min())
     data_max = int(data.max())
@@ -677,6 +962,15 @@ def save_mask(
     nib.save(output, str(output_path))
 
 
+def confidence_map_description(consensus_mode: str) -> str:
+    if consensus_mode == "weighted":
+        return (
+            "Conf:1 unanimous strong organ;2 strong weighted;"
+            "3 weak connected;5 bg/default"
+        )
+    return "Confidence: 1 high, 2 med, 3 med-low, 4 low, 5 very-low"
+
+
 def import_nibabel():
     try:
         import nibabel as nib
@@ -711,20 +1005,65 @@ def main() -> None:
     else:
         label_spaces = args.label_spaces
 
-    fallback_index = clip_fallback_index(
-        model_dirs,
-        args.clip_fallback_dir,
-        args.prediction_root,
-        args.no_clip_fallback,
-    )
+    model_ids = None
+    weak_thresholds = None
+    strong_thresholds = None
+    if args.consensus_mode == "weighted" or args.model_ids is not None:
+        model_ids = resolve_model_ids(model_dirs, args.model_ids)
+    if args.consensus_mode == "weighted":
+        weak_thresholds, strong_thresholds = resolve_weighted_thresholds(
+            args.weak_thresholds,
+            args.strong_thresholds,
+        )
+
+    if args.consensus_mode == "legacy":
+        fallback_index = clip_fallback_index(
+            model_dirs,
+            args.clip_fallback_dir,
+            args.prediction_root,
+            args.no_clip_fallback,
+        )
+    elif args.clip_fallback_dir is not None and not args.no_clip_fallback:
+        fallback_index = clip_fallback_index(
+            model_dirs,
+            args.clip_fallback_dir,
+            args.prediction_root,
+            disabled=False,
+        )
+    else:
+        fallback_index = None
+
+    if args.consensus_mode == "weighted":
+        print("Consensus mode: weighted")
     print("Using prediction directories:")
     for index, (directory, weight, label_space) in enumerate(zip(model_dirs, args.weights, label_spaces)):
+        model_id_note = f", model_id={model_ids[index]}" if model_ids is not None else ""
         fallback_note = " + CLIP fallback" if index == fallback_index else ""
-        print(f"  {directory} (label_space={label_space}, local weight={weight:g}){fallback_note}")
-    if fallback_index is None:
         print(
-            "CLIP fallback disabled or not auto-detected; unresolved voxels "
-            f"will remain {args.uncertain_label}."
+            f"  {directory} (label_space={label_space}, local weight={weight:g}"
+            f"{model_id_note}){fallback_note}"
+        )
+    if fallback_index is None:
+        if args.consensus_mode == "weighted":
+            print("CLIP fallback disabled for weighted mode; unresolved voxels become background.")
+        else:
+            print(
+                "CLIP fallback disabled or not auto-detected; unresolved voxels "
+                f"will remain {args.uncertain_label}."
+            )
+    elif args.consensus_mode == "weighted":
+        print(
+            "Explicit CLIP fallback will fill unresolved weighted voxels only; "
+            "this can reintroduce CLIP bias."
+        )
+    if args.consensus_mode == "weighted":
+        if model_ids is None or weak_thresholds is None or strong_thresholds is None:
+            raise RuntimeError("Weighted consensus settings were not initialized.")
+        print_weighted_settings(
+            model_ids,
+            DEFAULT_ORGAN_WEIGHTS,
+            weak_thresholds,
+            strong_thresholds,
         )
 
     files_by_model, case_names = matching_cases(model_dirs, args.case_name, args.strict)
@@ -750,32 +1089,54 @@ def main() -> None:
         ]
         validate_spatial_grid(case_name, images, args.ignore_affine)
 
-        consensus, confidence = consensus_agreement_mask(
-            *predictions,
-            uncertain_label=args.uncertain_label,
-            weights=tuple(args.weights),
-            local_radius=args.local_radius,
-            min_local_margin=args.min_local_margin,
-            min_local_support=args.min_local_support,
-            connectivity=args.connectivity,
-            clip_fallback=predictions[fallback_index] if fallback_index is not None else None,
-        )
+        if args.consensus_mode == "legacy":
+            consensus, confidence = consensus_agreement_mask(
+                *predictions,
+                uncertain_label=args.uncertain_label,
+                weights=tuple(args.weights),
+                local_radius=args.local_radius,
+                min_local_margin=args.min_local_margin,
+                min_local_support=args.min_local_support,
+                connectivity=args.connectivity,
+                clip_fallback=predictions[fallback_index] if fallback_index is not None else None,
+            )
+            description = (
+                f"Consensus mask; clip fallback={model_dirs[fallback_index].name}"
+                if fallback_index is not None
+                else f"Consensus mask; uncertain={args.uncertain_label}"
+            )
+        else:
+            if model_ids is None or weak_thresholds is None or strong_thresholds is None:
+                raise RuntimeError("Weighted consensus settings were not initialized.")
+            consensus, confidence = weighted_threshold_consensus(
+                tuple(predictions),
+                model_ids,
+                DEFAULT_ORGAN_WEIGHTS,
+                weak_thresholds,
+                strong_thresholds,
+                connectivity=args.connectivity,
+                uncertain_label=args.uncertain_label,
+            )
+            if fallback_index is not None:
+                unresolved = confidence == 5
+                consensus[unresolved] = predictions[fallback_index][unresolved]
+            description = (
+                f"Weighted consensus; clip fallback={model_dirs[fallback_index].name}"
+                if fallback_index is not None
+                else "Weighted foreground-threshold consensus"
+            )
         save_mask(
             consensus,
             images[0],
             output_path,
-            (
-                f"Consensus mask; clip fallback={model_dirs[fallback_index].name}"
-                if fallback_index is not None
-                else f"Consensus mask; uncertain={args.uncertain_label}"
-            ),
+            description,
         )
         if confidence_path is not None:
             save_mask(
                 confidence,
                 images[0],
                 confidence_path,
-                "Confidence: 1 high, 2 med, 3 med-low, 4 low, 5 very-low",
+                confidence_map_description(args.consensus_mode),
             )
         saved_count += 1
 
