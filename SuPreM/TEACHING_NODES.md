@@ -1,64 +1,62 @@
 # Teaching Nodes
 
-Snapshot taken: 2026-07-05 23:18 GB.
+Snapshot source: `sinfo -N -p Teaching -o "%N|%t|%c|%m|%G"` on
+2026-07-05.
 
-This ranking is for CPU/memory evaluation jobs like
-`evaluate_testing_set_human_agreement.sbatch`, which request 4 CPUs and 64 GB
-RAM and do not request a GPU.
+This ranks the Teaching nodes as if they are all healthy and available. The
+ranking is mainly for CPU/memory evaluation jobs in this repo, with GPU
+hardware included as useful context. For GPU-heavy model training, prefer newer
+GPU hardware more strongly than this table does.
 
-## Current Best Choice
+## Normal-Health Ranking
 
-Use `landonia23` right now.
+| Rank | Node | CPUs | RAM | GPUs | Why |
+| ---: | --- | ---: | ---: | --- | --- |
+| 1 | `saxa` | 96 | 2,060 GB | H200 resources: `gpu:h200:1`, `gpu:h200_3g.71gb:4`, `gpu:h200_1g.18gb:35` | Best hardware overall by a mile: most CPU, most RAM, and newest GPU class. |
+| 2 | `damnii07` | 40 | 380 GB | 8 x RTX 2080 Ti | Strong CPU/RAM node; good default for CPU/memory evaluation if healthy. |
+| 3 | `damnii08` | 40 | 380 GB | 8 x RTX 2080 Ti | Same class as `damnii07`; strong CPU/RAM node. |
+| 4 | `damnii10` | 40 | 380 GB | 8 x RTX 2080 Ti | Same class as `damnii07`; strong CPU/RAM node. |
+| 5 | `damnii11` | 40 | 380 GB | 8 x RTX 2080 Ti | Same class as `damnii07`; strong CPU/RAM node. |
+| 6 | `damnii12` | 40 | 380 GB | 8 x RTX 2080 Ti | Same class as `damnii07`; strong CPU/RAM node. |
+| 7 | `damnii09` | 40 | 300 GB | 8 x RTX 2080 Ti | Same CPU/GPU class as other `damnii` nodes, but less RAM. |
+| 8 | `opencast` | 32 | 250 GB | 2 x RTX 2080 Ti | Solid CPU/RAM fit, but fewer GPUs and less RAM than `damnii`. |
+| 9 | `landonia11` | 12 | 193 GB | 8 x RTX A6000 | Best non-`saxa` GPU hardware, but much smaller CPU/RAM than `damnii`. Great GPU choice if healthy. |
+| 10 | `landonia03` | 12 | 193 GB | 8 x RTX 2080 Ti | Smaller CPU/RAM node; fine for lightweight evaluation. |
+| 11 | `landonia05` | 12 | 193 GB | 8 x RTX 2080 Ti | Same class as `landonia03`. |
+| 12 | `landonia08` | 12 | 193 GB | 8 x RTX 2080 Ti | Same class as `landonia03`. |
+| 13 | `landonia23` | 12 | 193 GB | 8 x RTX 2080 Ti | Same class as `landonia03`; currently used successfully for the weighted-mask evaluation. |
+| 14 | `landonia25` | 12 | 193 GB | 8 x RTX 2080 Ti | Same class as `landonia03`. |
 
-Job `3530098` was submitted to `landonia23` and is running:
+## Quick Choice Guide
+
+For CPU/memory evaluation jobs:
+
+1. Use `saxa` if healthy and not draining.
+2. Otherwise use any healthy `damnii` node with enough free memory.
+3. Otherwise use `opencast`.
+4. Otherwise use an idle `landonia` node.
+
+For GPU-heavy jobs:
+
+1. Use `saxa` if you need H200-class GPU resources.
+2. Use `landonia11` if A6000 GPUs are enough and the node is healthy.
+3. Use `damnii*` or other `landonia*` nodes for RTX 2080 Ti jobs.
+
+## Current Caveat From This Session
+
+On 2026-07-05, `saxa` was draining with:
 
 ```text
-JOBID    PARTITION  NAME             ST  NODELIST
-3530098  Teaching   human-agreement  R   landonia23
+Kill task failed (JobId=3527293 StepId=0)
 ```
 
-## Ranked Nodes
+Also, a test submission to `damnii12` failed immediately with
+`RaisedSignal:53`. The evaluation job was then submitted to `landonia23` and
+started successfully as job `3530098`.
 
-| Rank | Node | State | CPUs | RAM | Notes |
-| ---: | --- | --- | ---: | ---: | --- |
-| 1 | `landonia23` | idle, now running this job | 12 | 193 GB | Best practical choice after `damnii12` failed at launch. Plenty for 4 CPU / 64 GB evaluation. |
-| 2 | `landonia25` | idle | 12 | 193 GB | Same class as `landonia23`; good fallback for this job. |
-| 3 | `damnii12` | idle | 40 | 380 GB | Best on paper, but job `3530096` failed instantly on this node with `RaisedSignal:53`; avoid until it looks healthy. |
-| 4 | `damnii10` | mixed | 40 | 380 GB | Strong node if enough CPUs/RAM are free. |
-| 5 | `damnii07` | mixed | 40 | 380 GB | Strong node, but currently shared with running jobs. |
-| 6 | `damnii08` | mixed | 40 | 380 GB | Strong node, but currently shared with running jobs. |
-| 7 | `damnii09` | mixed | 40 | 300 GB | Good capacity, a bit less RAM than other `damnii` nodes. |
-| 8 | `opencast` | mixed | 32 | 250 GB | Good CPU/RAM fit, but currently shared. |
-| 9 | `landonia03` | mixed | 12 | 193 GB | Usable if free enough, smaller than `damnii`/`opencast`. |
-| 10 | `landonia05` | mixed | 12 | 193 GB | Usable if free enough, smaller than `damnii`/`opencast`. |
-| 11 | `landonia08` | mixed | 12 | 193 GB | Usable if free enough, smaller than `damnii`/`opencast`. |
-| 12 | `landonia11` | mixed@ | 12 | 193 GB | Lower priority choice because of the `@` state marker. |
-| 13 | `damnii11` | allocated | 40 | 380 GB | Avoid while fully allocated. |
-| 14 | `saxa` | draining | 96 | 206 GB shown by `sinfo` | Avoid. Drain reason: `Kill task failed (JobId=3527293 StepId=0)`. |
-
-## Useful Commands
-
-Check your job:
-
-```bash
-squeue -u "$USER"
-```
-
-Check Teaching nodes:
+Always check current state before pinning a job:
 
 ```bash
 sinfo -N -p Teaching -l
+squeue -u "$USER"
 ```
-
-Submit this evaluation to a specific good node:
-
-```bash
-cd /home/s2347484/Seg/SuPreM
-sbatch --chdir=/home/s2347484/Seg/SuPreM --nodelist=landonia25 \
-  sbatch/evaluate_testing_set_human_agreement.sbatch \
-  results/testing_set_human_plus_weighted_agreement_mask \
-  /home/s2347484/Seg/testing_set \
-  --annotations annotation_1.nii.gz annotation_2.nii.gz annotation_3.nii.gz agreement_mask.nii.gz
-```
-
-Avoid hard-coding `saxa` while it is draining.
