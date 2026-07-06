@@ -35,30 +35,30 @@ SUPPORTED_MODEL_IDS = {"clip_unet", "segresnet", "swin5050"}
 
 DEFAULT_ORGAN_WEIGHTS = {
     1: {  # pancreas
-        "clip_unet": 0.5921275842936745,
-        "segresnet": 0.7320385634205714,
-        "swin5050": 0.30990320036218405,
+        "clip_unet": 0.5777872787362869,
+        "segresnet": 0.7322059132266278,
+        "swin5050": 0.30526418653608517,
     },
     2: {  # kidney
-        "clip_unet": 0.8425745728384174,
-        "segresnet": 0.894132310726161,
-        "swin5050": 0.5285563309699496,
+        "clip_unet": 0.8394793608560476,
+        "segresnet": 0.889608556575875,
+        "swin5050": 0.5146468864781183,
     },
     3: {  # liver
-        "clip_unet": 0.9404378784429687,
-        "segresnet": 0.5893239540504726,
-        "swin5050": 0.9216424787042481,
+        "clip_unet": 0.9384518006733654,
+        "segresnet": 0.5927031959642949,
+        "swin5050": 0.91382983161436,
     },
 }
 DEFAULT_WEAK_THRESHOLDS = {
     1: 0.55,  # pancreas
-    2: 0.75,  # kidney
-    3: 0.90,  # liver
+    2: 0.80,  # kidney
+    3: 1.00,  # liver
 }
 DEFAULT_STRONG_THRESHOLDS = {
     1: 0.65,  # pancreas
-    2: 0.85,  # kidney
-    3: 1.20,  # liver
+    2: 0.90,  # kidney
+    3: 1.30,  # liver
 }
 ORGAN_LABELS = (1, 2, 3)
 ORGAN_NAMES = {
