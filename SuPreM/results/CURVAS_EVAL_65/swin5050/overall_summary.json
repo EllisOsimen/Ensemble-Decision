@@ -1,0 +1,18 @@
+{
+  "model": "swin5050",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/CURVAS_INFERENCE/swinunetr_5050",
+  "label_space": "btcv",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 65,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.6829081549605374,
+  "macro_case_nsd": 0.5750612103699253,
+  "micro_dsc": 0.9958443025996272,
+  "micro_dsc_foreground": 0.8469588833536623,
+  "macro_case_dsc_foreground": 0.5779136348761879,
+  "macro_case_nsd_foreground": 0.44753133496701436,
+  "tp": 15956701912,
+  "fp": 66587944,
+  "fn": 66587944
+}

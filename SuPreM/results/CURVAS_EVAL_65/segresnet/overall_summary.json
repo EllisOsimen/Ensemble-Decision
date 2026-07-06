@@ -1,0 +1,18 @@
+{
+  "model": "segresnet",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/CURVAS_INFERENCE/suprem_segresnet",
+  "label_space": "suprem",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 65,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.8027115171996786,
+  "macro_case_nsd": 0.663047874116133,
+  "micro_dsc": 0.9927872958650421,
+  "micro_dsc_foreground": 0.6786341394948047,
+  "macro_case_dsc_foreground": 0.7381725552555992,
+  "macro_case_nsd_foreground": 0.5676141190491921,
+  "tp": 15907718607,
+  "fp": 115571249,
+  "fn": 115571249
+}
