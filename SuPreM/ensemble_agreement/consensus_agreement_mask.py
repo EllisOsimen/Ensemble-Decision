@@ -10,8 +10,9 @@ The consensus behavior follows ``Agreement.MD``:
   * all labels different -> choose a locally supported label, otherwise mark
     uncertain or fall back to CLIP Universal U-Net
 
-Use ``--consensus-mode weighted`` to switch to organ-aware foreground thresholds.
-The default is ``legacy`` so existing command lines keep the same behavior.
+Use ``--consensus-mode weighted`` to switch to organ-aware foreground thresholds,
+or ``--consensus-mode staple`` to run per-organ binary STAPLE fusion. The default
+is ``legacy`` so existing command lines keep the same behavior.
 """
 
 from __future__ import annotations
@@ -24,15 +25,21 @@ from scipy import ndimage
 from tqdm import tqdm
 
 
+# ---------------------------------------------------------------------------
+# Global configuration
+# ---------------------------------------------------------------------------
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 DEFAULT_PREDICTION_ROOT = PROJECT_DIR / "results" / "CURVAS_INFERENCE"
 DEFAULT_UNCERTAIN_LABEL = 255
 SUPPORTED_LABEL_SPACES = {"target", "btcv", "suprem"}
-SUPPORTED_CONSENSUS_MODES = {"legacy", "weighted"}
+SUPPORTED_CONSENSUS_MODES = {"legacy", "staple", "weighted"}
 SUPPORTED_MODEL_IDS = {"clip_unet", "segresnet", "swin5050"}
 
 
+# Model- and organ-specific weights used by weighted consensus. These values
+# are deliberately kept as data here so the fusion rule remains transparent.
 DEFAULT_ORGAN_WEIGHTS = {
     1: {  # pancreas
         "clip_unet": 0.5777872787362869,
@@ -68,6 +75,8 @@ ORGAN_NAMES = {
 }
 
 
+# External model label spaces are normalized into this compact CURVAS target
+# space before any consensus mode runs.
 BTCV_TO_TARGET = {
     0: 0,
     1: 0,  # spleen
@@ -107,7 +116,13 @@ SUPREM_TO_TARGET = {
 }
 
 
+# ---------------------------------------------------------------------------
+# CLI and run setup helpers
+# ---------------------------------------------------------------------------
+
 def parse_args() -> argparse.Namespace:
+    """Collect all file-selection, consensus-mode, and output options."""
+
     parser = argparse.ArgumentParser(
         description=(
             "Create one consensus agreement mask for every NIfTI prediction "
@@ -154,7 +169,8 @@ def parse_args() -> argparse.Namespace:
         default="legacy",
         help=(
             "Consensus rule to use. legacy preserves the original majority/local "
-            "decision behavior; weighted enables organ-aware foreground thresholds."
+            "decision behavior; weighted enables organ-aware foreground thresholds; "
+            "staple runs per-organ binary STAPLE fusion."
         ),
     )
     parser.add_argument(
@@ -184,6 +200,51 @@ def parse_args() -> argparse.Namespace:
         default=tuple(DEFAULT_STRONG_THRESHOLDS[label] for label in ORGAN_LABELS),
         metavar=("PANCREAS", "KIDNEY", "LIVER"),
         help="Weighted-mode strong foreground thresholds for pancreas, kidney, and liver.",
+    )
+    parser.add_argument(
+        "--staple-prob-threshold",
+        type=float,
+        default=0.5,
+        help=(
+            "STAPLE-mode minimum best organ probability required to assign a "
+            "foreground label."
+        ),
+    )
+    parser.add_argument(
+        "--staple-margin-threshold",
+        type=float,
+        default=0.1,
+        help=(
+            "STAPLE-mode minimum difference between the best and second-best "
+            "organ probability required to resolve organ conflicts."
+        ),
+    )
+    parser.add_argument(
+        "--staple-max-iter",
+        type=int,
+        default=50,
+        help="STAPLE-mode maximum EM iterations for each binary organ run.",
+    )
+    parser.add_argument(
+        "--staple-tol",
+        type=float,
+        default=1e-5,
+        help="STAPLE-mode EM stopping tolerance.",
+    )
+    parser.add_argument(
+        "--staple-eps",
+        type=float,
+        default=1e-6,
+        help="STAPLE-mode numerical epsilon for clipping probabilities.",
+    )
+    parser.add_argument(
+        "--save-staple-probabilities",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory for STAPLE organ probability maps. Files are "
+            "written under one subdirectory per case."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -234,8 +295,9 @@ def parse_args() -> argparse.Namespace:
             "Model directory to use when consensus and local support abstain. "
             "The directory must be one of the three prediction directories. "
             "If omitted in legacy mode, a directory with 'clip' in its name is "
-            "detected automatically. In weighted mode, CLIP fallback is used only "
-            "when this option is passed explicitly and can reintroduce CLIP bias."
+            "detected automatically. In weighted and STAPLE modes, CLIP fallback "
+            "is used only when this option is passed explicitly and can "
+            "reintroduce CLIP bias."
         ),
     )
     parser.add_argument(
@@ -243,7 +305,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Keep unresolved all-disagree voxels as --uncertain-label in legacy "
-            "mode, or as background in weighted mode, instead of using CLIP fallback."
+            "mode, or as background in weighted/STAPLE mode, instead of using "
+            "CLIP fallback."
         ),
     )
     parser.add_argument(
@@ -300,17 +363,23 @@ def parse_args() -> argparse.Namespace:
             "1=unanimous strong organ, 2=non-unanimous strong weighted organ, "
             "3=weak connected organ, 5=background/default. Legacy labels are "
             "1=high, 2=medium, 3=medium-low, 4=low local decision, "
-            "5=very-low/uncertain."
+            "5=very-low/uncertain. STAPLE labels are 1=very confident accepted "
+            "organ, 2=moderate accepted organ, 3=low accepted organ, "
+            "4=ambiguous organ conflict, 5=low probability/default background."
         ),
     )
     return parser.parse_args()
 
 
 def resolve_path(path: Path, base: Path) -> Path:
+    """Resolve user-facing relative paths against a known project/root directory."""
+
     return path if path.is_absolute() else base / path
 
 
 def output_dir_from_args(args: argparse.Namespace) -> Path:
+    """Pick the consensus mask output directory, preserving the legacy default."""
+
     if args.output_dir is not None:
         return resolve_path(args.output_dir, PROJECT_DIR)
     return args.prediction_root / "agreement_masks"
@@ -325,7 +394,10 @@ def discover_model_dirs(
     explicit_model_dirs: list[Path] | None,
     output_dir: Path,
     confidence_dir: Path | None,
+    extra_ignored_dirs: list[Path] | None = None,
 ) -> list[Path]:
+    """Return the three prediction directories that should be ensembled."""
+
     if explicit_model_dirs is not None:
         if len(explicit_model_dirs) != 3:
             raise ValueError("Pass exactly three --model-dir values.")
@@ -337,6 +409,8 @@ def discover_model_dirs(
     ignored = {output_dir.resolve(), (prediction_root / "agreement_masks").resolve()}
     if confidence_dir is not None:
         ignored.add(confidence_dir.resolve())
+    if extra_ignored_dirs is not None:
+        ignored.update(path.resolve() for path in extra_ignored_dirs)
 
     model_dirs = [
         path
@@ -368,6 +442,8 @@ def resolve_model_ids(
     model_dirs: list[Path],
     explicit_model_ids: list[str] | None,
 ) -> tuple[str, str, str]:
+    """Resolve model identities used by weighted consensus organ weights."""
+
     if explicit_model_ids is not None:
         if len(explicit_model_ids) != len(model_dirs):
             raise ValueError("Pass exactly three --model-id values, matching --model-dir order.")
@@ -407,6 +483,8 @@ def resolve_weighted_thresholds(
     weak_values: tuple[float, float, float] | list[float],
     strong_values: tuple[float, float, float] | list[float],
 ) -> tuple[dict[int, float], dict[int, float]]:
+    """Convert CLI threshold triples into organ-label dictionaries."""
+
     weak_thresholds = thresholds_from_values(weak_values)
     strong_thresholds = thresholds_from_values(strong_values)
     invalid = [
@@ -440,12 +518,25 @@ def print_weighted_settings(
         )
 
 
+def print_staple_settings(args: argparse.Namespace) -> None:
+    print("STAPLE settings:")
+    print(f"  probability threshold={args.staple_prob_threshold:.6g}")
+    print(f"  margin threshold={args.staple_margin_threshold:.6g}")
+    print(f"  max iterations={args.staple_max_iter}")
+    print(f"  tolerance={args.staple_tol:.6g}")
+    print(f"  epsilon={args.staple_eps:.6g}")
+    if args.save_staple_probabilities is not None:
+        print(f"  save organ probabilities={args.save_staple_probabilities}")
+
+
 def clip_fallback_index(
     model_dirs: list[Path],
     explicit_clip_fallback_dir: Path | None,
     prediction_root: Path,
     disabled: bool,
 ) -> int | None:
+    """Find the optional CLIP fallback model index for modes that allow it."""
+
     if disabled:
         return None
 
@@ -492,6 +583,8 @@ def matching_cases(
     case_name: str | None,
     strict: bool,
 ) -> tuple[list[dict[str, Path]], list[str]]:
+    """Find NIfTI filenames present in all three model prediction directories."""
+
     files_by_model = [nifti_files(directory) for directory in model_dirs]
     name_sets = [set(files) for files in files_by_model]
     common_names = set.intersection(*name_sets)
@@ -537,6 +630,8 @@ def matching_cases(
 
 
 def load_integer_mask(path: Path):
+    """Load a NIfTI label mask and reject non-label-like floating data."""
+
     nib = import_nibabel()
 
     image = nib.load(str(path))
@@ -550,6 +645,8 @@ def load_integer_mask(path: Path):
 
 
 def remap_lookup(prediction: np.ndarray, lookup: dict[int, int], case_name: str, model_name: str) -> np.ndarray:
+    """Apply one explicit source-label to target-label lookup table."""
+
     unique_labels = np.unique(prediction).astype(int)
     unknown = sorted(set(unique_labels) - set(lookup))
     if unknown:
@@ -587,6 +684,8 @@ def validate_spatial_grid(
     images: list[object],
     ignore_affine: bool,
 ) -> None:
+    """Ensure all model predictions live on the same voxel grid."""
+
     reference = images[0]
     for model_index, image in enumerate(images[1:], start=2):
         if image.shape != reference.shape:
@@ -609,7 +708,13 @@ def make_structure(ndim: int, connectivity: int) -> np.ndarray:
     return ndimage.generate_binary_structure(ndim, min(connectivity, ndim))
 
 
+# ---------------------------------------------------------------------------
+# Legacy majority/local-support consensus
+# ---------------------------------------------------------------------------
+
 def pairwise_majority(first: np.ndarray, second: np.ndarray, third: np.ndarray):
+    """Classify voxels as unanimous, pairwise agreement, or all-disagree."""
+
     first_second = first == second
     first_third = first == third
     second_third = second == third
@@ -632,6 +737,8 @@ def connected_single_organ_votes(
     two_background: np.ndarray,
     connectivity: int,
 ) -> None:
+    """Promote [background, background, organ] voxels connected to that organ."""
+
     structure = make_structure(consensus.ndim, connectivity)
     candidate_labels = sorted(
         int(label)
@@ -646,6 +753,8 @@ def connected_single_organ_votes(
         if not candidates.any() or not confident_same_label.any():
             continue
 
+        # Build components from candidate voxels plus already-confident organ
+        # voxels. Only candidates touching a confident component are promoted.
         components, _ = ndimage.label(candidates | confident_same_label, structure=structure)
         connected_ids = np.unique(components[confident_same_label])
         connected_ids = connected_ids[connected_ids != 0]
@@ -665,6 +774,8 @@ def local_label_decisions(
     min_local_margin: float,
     min_local_support: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve all-disagree voxels using weighted label support nearby."""
+
     if local_radius < 0:
         raise ValueError("--local-radius must be non-negative.")
     if len(weights) != len(predictions):
@@ -747,6 +858,8 @@ def consensus_agreement_mask(
     connectivity: int = 3,
     clip_fallback: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Run the original Agreement.MD consensus rule and confidence coding."""
+
     shapes = {array.shape for array in (first, second, third)}
     if len(shapes) != 1:
         raise ValueError(f"Prediction shapes differ: {sorted(shapes)}")
@@ -765,6 +878,8 @@ def consensus_agreement_mask(
     consensus = np.full(first.shape, uncertain_label, dtype=consensus_dtype)
     confidence = np.full(first.shape, 5, dtype=np.uint8)
 
+    # Straight majority cases are handled first: unanimous labels are highest
+    # confidence, while two matching organ labels are medium confidence.
     consensus[unanimous] = first[unanimous]
     confidence[unanimous] = 1
 
@@ -777,6 +892,8 @@ def consensus_agreement_mask(
     consensus[two_background] = 0
     confidence[two_background] = 3
     single_organ_label = first + second + third
+    # Two-background/one-organ voxels stay background unless they are connected
+    # to an already stronger region of the same organ.
     connected_single_organ_votes(
         consensus,
         confidence,
@@ -788,6 +905,8 @@ def consensus_agreement_mask(
     local_slices = expanded_mask_slices(all_disagree, local_radius)
     local_accept = None
     if local_slices is not None:
+        # Local decisions can be expensive over a full CT volume, so crop to the
+        # all-disagree bounding box before running neighborhood support.
         local_labels, local_accept = local_label_decisions(
             (first[local_slices], second[local_slices], third[local_slices]),
             all_disagree[local_slices],
@@ -802,6 +921,8 @@ def consensus_agreement_mask(
         confidence_crop[local_accept] = 4
 
     if clip_fallback is not None:
+        # CLIP fallback is a last resort for all-disagree voxels not resolved by
+        # local support; it never overrides majority decisions above.
         unresolved = all_disagree.copy()
         if local_slices is not None and local_accept is not None:
             unresolved_crop = unresolved[local_slices]
@@ -811,12 +932,18 @@ def consensus_agreement_mask(
     return consensus, confidence
 
 
+# ---------------------------------------------------------------------------
+# Weighted organ-threshold consensus
+# ---------------------------------------------------------------------------
+
 def connected_weak_organ_candidates(
     consensus: np.ndarray,
     confidence: np.ndarray,
     weak_candidates: dict[int, np.ndarray],
     connectivity: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Accept weak weighted candidates only when exactly one organ connects."""
+
     structure = make_structure(consensus.ndim, connectivity)
     accepted_count = np.zeros(consensus.shape, dtype=np.uint8)
     accepted_label = np.zeros(consensus.shape, dtype=np.int16)
@@ -827,6 +954,8 @@ def connected_weak_organ_candidates(
         if not candidates.any() or not strong_same_label.any():
             continue
 
+        # A weak voxel is usable only if its connected component touches a
+        # strong component of the same organ.
         components, _ = ndimage.label(candidates | strong_same_label, structure=structure)
         connected_ids = np.unique(components[strong_same_label])
         connected_ids = connected_ids[connected_ids != 0]
@@ -849,6 +978,8 @@ def weighted_threshold_consensus(
     connectivity: int = 3,
     uncertain_label: int = DEFAULT_UNCERTAIN_LABEL,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Fuse organ votes using model-specific weights and organ thresholds."""
+
     if len({prediction.shape for prediction in predictions}) != 1:
         raise ValueError("All predictions must have the same shape.")
     if len(model_ids) != len(predictions):
@@ -924,7 +1055,166 @@ def weighted_threshold_consensus(
     return consensus, confidence
 
 
+# ---------------------------------------------------------------------------
+# Per-organ binary STAPLE consensus
+# ---------------------------------------------------------------------------
+
+def run_binary_staple(
+    binary_masks: np.ndarray,
+    max_iter: int = 50,
+    tol: float = 1e-5,
+    eps: float = 1e-6,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Estimate one binary latent truth probability map with STAPLE EM."""
+
+    if binary_masks.ndim < 2:
+        raise ValueError("binary_masks must have shape num_models x spatial_dims.")
+    if binary_masks.shape[0] == 0:
+        raise ValueError("binary_masks must include at least one model.")
+    if max_iter < 1:
+        raise ValueError("--staple-max-iter must be at least 1.")
+    if tol <= 0.0:
+        raise ValueError("--staple-tol must be positive.")
+    if not 0.0 < eps < 0.5:
+        raise ValueError("--staple-eps must be greater than 0 and less than 0.5.")
+
+    binary_masks = binary_masks.astype(np.float64, copy=False)
+    num_models = binary_masks.shape[0]
+
+    # Start with the simple foreground vote fraction, then iteratively estimate
+    # each model's sensitivity/specificity and the latent truth probability.
+    p = binary_masks.mean(axis=0)
+    p = np.clip(p, eps, 1.0 - eps)
+
+    sensitivity = np.full(num_models, 0.99, dtype=np.float64)
+    specificity = np.full(num_models, 0.99, dtype=np.float64)
+
+    for _iteration in range(max_iter):
+        old_p = p.copy()
+
+        # M-step: estimate model quality against the current soft truth.
+        for model_index in range(num_models):
+            r = binary_masks[model_index]
+
+            expected_tp = np.sum(p * r)
+            expected_fn = np.sum(p * (1.0 - r))
+            expected_tn = np.sum((1.0 - p) * (1.0 - r))
+            expected_fp = np.sum((1.0 - p) * r)
+
+            sensitivity[model_index] = expected_tp / max(expected_tp + expected_fn, eps)
+            specificity[model_index] = expected_tn / max(expected_tn + expected_fp, eps)
+
+        sensitivity = np.clip(sensitivity, eps, 1.0 - eps)
+        specificity = np.clip(specificity, eps, 1.0 - eps)
+
+        prior_foreground = np.clip(np.mean(p), eps, 1.0 - eps)
+        prior_background = 1.0 - prior_foreground
+
+        # E-step: combine model likelihoods into the next soft truth estimate.
+        likelihood_fg = np.full(p.shape, prior_foreground, dtype=np.float64)
+        likelihood_bg = np.full(p.shape, prior_background, dtype=np.float64)
+
+        for model_index in range(num_models):
+            r = binary_masks[model_index]
+
+            likelihood_fg *= np.where(r > 0.5, sensitivity[model_index], 1.0 - sensitivity[model_index])
+            likelihood_bg *= np.where(r > 0.5, 1.0 - specificity[model_index], specificity[model_index])
+
+        denom = likelihood_fg + likelihood_bg
+        p = likelihood_fg / np.maximum(denom, eps)
+        p = np.clip(p, eps, 1.0 - eps)
+
+        change = np.mean(np.abs(p - old_p))
+        if change < tol:
+            break
+
+    return p, sensitivity, specificity
+
+
+def staple_consensus(
+    predictions: tuple[np.ndarray, np.ndarray, np.ndarray],
+    prob_threshold: float = 0.5,
+    margin_threshold: float = 0.1,
+    max_iter: int = 50,
+    tol: float = 1e-5,
+    eps: float = 1e-6,
+) -> tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]]:
+    """Run binary STAPLE per organ, then fuse organ probabilities to labels."""
+
+    if len({prediction.shape for prediction in predictions}) != 1:
+        raise ValueError("All predictions must have the same shape.")
+    if not 0.0 <= prob_threshold <= 1.0:
+        raise ValueError("--staple-prob-threshold must be between 0 and 1.")
+    if not 0.0 <= margin_threshold <= 1.0:
+        raise ValueError("--staple-margin-threshold must be between 0 and 1.")
+
+    output_shape = predictions[0].shape
+    probability_maps: dict[int, np.ndarray] = {}
+
+    # Background is not estimated as its own STAPLE class. Each organ gets a
+    # one-vs-rest probability map after predictions are remapped to 0..3 labels.
+    for organ_label in ORGAN_LABELS:
+        binary_masks = np.stack(
+            [prediction == organ_label for prediction in predictions],
+            axis=0,
+        )
+
+        if binary_masks.sum() == 0:
+            probability_maps[organ_label] = np.zeros(output_shape, dtype=np.float32)
+            continue
+
+        p, _sensitivity, _specificity = run_binary_staple(
+            binary_masks,
+            max_iter=max_iter,
+            tol=tol,
+            eps=eps,
+        )
+        probability_maps[organ_label] = p.astype(np.float32)
+
+    organ_probs = np.stack(
+        [probability_maps[organ_label] for organ_label in ORGAN_LABELS],
+        axis=0,
+    )
+    # Conflict handling is done after the independent organ runs: a voxel needs
+    # both enough absolute probability and enough separation from second place.
+    best_idx = np.argmax(organ_probs, axis=0)
+    best_prob = np.max(organ_probs, axis=0)
+
+    sorted_probs = np.sort(organ_probs, axis=0)
+    second_best_prob = sorted_probs[-2]
+    margin = best_prob - second_best_prob
+
+    consensus = np.zeros(output_shape, dtype=np.uint8)
+    confidence = np.full(output_shape, 5, dtype=np.uint8)
+
+    # STAPLE leaves non-accepted voxels as background by default. Confidence 4
+    # records organ conflicts that crossed the probability threshold but failed
+    # the margin threshold; confidence 5 is low foreground probability.
+    accepted = (best_prob >= prob_threshold) & (margin >= margin_threshold)
+    ambiguous = (best_prob >= prob_threshold) & (margin < margin_threshold)
+    low_probability = best_prob < prob_threshold
+
+    confidence[ambiguous] = 4
+    confidence[low_probability] = 5
+
+    for organ_index, organ_label in enumerate(ORGAN_LABELS):
+        organ_accept = accepted & (best_idx == organ_index)
+        consensus[organ_accept] = organ_label
+
+    confidence[accepted & (best_prob >= 0.90)] = 1
+    confidence[accepted & (best_prob >= 0.70) & (best_prob < 0.90)] = 2
+    confidence[accepted & (best_prob < 0.70)] = 3
+
+    return consensus, confidence, probability_maps
+
+
+# ---------------------------------------------------------------------------
+# NIfTI output helpers
+# ---------------------------------------------------------------------------
+
 def output_dtype(data: np.ndarray) -> np.dtype:
+    """Choose the smallest integer dtype that preserves a label/confidence map."""
+
     data_min = int(data.min())
     data_max = int(data.max())
     if 0 <= data_min and data_max <= np.iinfo(np.uint8).max:
@@ -940,6 +1230,8 @@ def save_mask(
     output_path: Path,
     description: str,
 ) -> None:
+    """Save an integer NIfTI mask while preserving spatial metadata."""
+
     nib = import_nibabel()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -962,16 +1254,80 @@ def save_mask(
     nib.save(output, str(output_path))
 
 
+def case_stem(case_name: str) -> str:
+    """Return a case identifier without .nii or .nii.gz."""
+
+    if case_name.endswith(".nii.gz"):
+        return case_name[:-7]
+    if case_name.endswith(".nii"):
+        return case_name[:-4]
+    return Path(case_name).stem
+
+
+def save_probability_map(
+    data: np.ndarray,
+    reference: object,
+    output_path: Path,
+    description: str,
+) -> None:
+    """Save a float32 probability map with the reference image grid/header."""
+
+    nib = import_nibabel()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    saved_data = data.astype(np.float32, copy=False)
+
+    header = reference.header.copy()
+    header.set_data_dtype(np.float32)
+    header["cal_min"] = float(saved_data.min())
+    header["cal_max"] = float(saved_data.max())
+    header["descrip"] = description[:79]
+
+    output = nib.Nifti1Image(saved_data, reference.affine, header)
+    qform, qform_code = reference.get_qform(coded=True)
+    sform, sform_code = reference.get_sform(coded=True)
+    if qform is not None:
+        output.set_qform(qform, int(qform_code))
+    if sform is not None:
+        output.set_sform(sform, int(sform_code))
+    nib.save(output, str(output_path))
+
+
+def save_staple_probability_maps(
+    probability_maps: dict[int, np.ndarray],
+    reference: object,
+    output_dir: Path,
+    case_name: str,
+) -> None:
+    """Write one STAPLE probability NIfTI per organ under a case directory."""
+
+    case_probability_dir = output_dir / case_stem(case_name)
+    for organ_label in ORGAN_LABELS:
+        organ_name = ORGAN_NAMES[organ_label]
+        save_probability_map(
+            probability_maps[organ_label],
+            reference,
+            case_probability_dir / f"{organ_name}_probability.nii.gz",
+            f"STAPLE {organ_name} probability",
+        )
+
+
 def confidence_map_description(consensus_mode: str) -> str:
+    """Keep confidence-code legends close to the saved NIfTI header metadata."""
+
     if consensus_mode == "weighted":
         return (
             "Conf:1 unanimous strong organ;2 strong weighted;"
             "3 weak connected;5 bg/default"
         )
+    if consensus_mode == "staple":
+        return "STAPLE conf:1 >=.90;2 >=.70;3 accepted low;4 ambig;5 low prob"
     return "Confidence: 1 high, 2 med, 3 med-low, 4 low, 5 very-low"
 
 
 def import_nibabel():
+    """Import nibabel lazily so CLI help can run without NIfTI dependencies."""
+
     try:
         import nibabel as nib
     except ModuleNotFoundError as exc:
@@ -982,13 +1338,27 @@ def import_nibabel():
     return nib
 
 
+# ---------------------------------------------------------------------------
+# Pipeline driver
+# ---------------------------------------------------------------------------
+
 def main() -> None:
+    """Load matching cases, run the requested consensus mode, and save outputs."""
+
     args = parse_args()
+
+    # Resolve all output roots before model discovery so generated folders can
+    # be excluded when auto-detecting prediction directories.
     args.prediction_root = resolve_path(args.prediction_root, PROJECT_DIR)
     output_dir = output_dir_from_args(args)
     confidence_dir = (
         resolve_path(args.confidence_dir, PROJECT_DIR)
         if args.confidence_dir is not None
+        else None
+    )
+    staple_probability_dir = (
+        resolve_path(args.save_staple_probabilities, PROJECT_DIR)
+        if args.save_staple_probabilities is not None
         else None
     )
 
@@ -997,6 +1367,7 @@ def main() -> None:
         args.model_dirs,
         output_dir,
         confidence_dir,
+        [staple_probability_dir] if staple_probability_dir is not None else None,
     )
     if args.label_spaces is None:
         label_spaces = ["target"] * len(model_dirs)
@@ -1005,6 +1376,8 @@ def main() -> None:
     else:
         label_spaces = args.label_spaces
 
+    # Weighted mode needs model identities for organ-specific reliability
+    # weights. Legacy/STAPLE do not need them unless the user supplied IDs.
     model_ids = None
     weak_thresholds = None
     strong_thresholds = None
@@ -1016,6 +1389,8 @@ def main() -> None:
             args.strong_thresholds,
         )
 
+    # Legacy keeps its historical CLIP auto-detection. Weighted/STAPLE only use
+    # CLIP fallback when the user passes --clip-fallback-dir explicitly.
     if args.consensus_mode == "legacy":
         fallback_index = clip_fallback_index(
             model_dirs,
@@ -1035,6 +1410,8 @@ def main() -> None:
 
     if args.consensus_mode == "weighted":
         print("Consensus mode: weighted")
+    elif args.consensus_mode == "staple":
+        print("Consensus mode: staple")
     print("Using prediction directories:")
     for index, (directory, weight, label_space) in enumerate(zip(model_dirs, args.weights, label_spaces)):
         model_id_note = f", model_id={model_ids[index]}" if model_ids is not None else ""
@@ -1046,6 +1423,8 @@ def main() -> None:
     if fallback_index is None:
         if args.consensus_mode == "weighted":
             print("CLIP fallback disabled for weighted mode; unresolved voxels become background.")
+        elif args.consensus_mode == "staple":
+            print("CLIP fallback disabled for STAPLE mode; non-accepted voxels remain background.")
         else:
             print(
                 "CLIP fallback disabled or not auto-detected; unresolved voxels "
@@ -1054,6 +1433,11 @@ def main() -> None:
     elif args.consensus_mode == "weighted":
         print(
             "Explicit CLIP fallback will fill unresolved weighted voxels only; "
+            "this can reintroduce CLIP bias."
+        )
+    elif args.consensus_mode == "staple":
+        print(
+            "Explicit CLIP fallback will fill non-accepted STAPLE voxels only; "
             "this can reintroduce CLIP bias."
         )
     if args.consensus_mode == "weighted":
@@ -1065,11 +1449,15 @@ def main() -> None:
             weak_thresholds,
             strong_thresholds,
         )
+    elif args.consensus_mode == "staple":
+        print_staple_settings(args)
 
     files_by_model, case_names = matching_cases(model_dirs, args.case_name, args.strict)
     output_dir.mkdir(parents=True, exist_ok=True)
     if confidence_dir is not None:
         confidence_dir.mkdir(parents=True, exist_ok=True)
+    if staple_probability_dir is not None:
+        staple_probability_dir.mkdir(parents=True, exist_ok=True)
 
     saved_count = 0
     skipped_count = 0
@@ -1081,6 +1469,8 @@ def main() -> None:
             skipped_count += 1
             continue
 
+        # Load, remap, and validate before consensus so every mode operates in
+        # the same CURVAS label space on the same spatial grid.
         loaded = [load_integer_mask(files[case_name]) for files in files_by_model]
         images = [image for image, _ in loaded]
         predictions = [
@@ -1089,6 +1479,8 @@ def main() -> None:
         ]
         validate_spatial_grid(case_name, images, args.ignore_affine)
 
+        # From this point onward, only the fusion strategy changes by mode; the
+        # input predictions and output writers are shared.
         if args.consensus_mode == "legacy":
             consensus, confidence = consensus_agreement_mask(
                 *predictions,
@@ -1105,7 +1497,8 @@ def main() -> None:
                 if fallback_index is not None
                 else f"Consensus mask; uncertain={args.uncertain_label}"
             )
-        else:
+            probability_maps = None
+        elif args.consensus_mode == "weighted":
             if model_ids is None or weak_thresholds is None or strong_thresholds is None:
                 raise RuntimeError("Weighted consensus settings were not initialized.")
             consensus, confidence = weighted_threshold_consensus(
@@ -1125,6 +1518,24 @@ def main() -> None:
                 if fallback_index is not None
                 else "Weighted foreground-threshold consensus"
             )
+            probability_maps = None
+        else:
+            consensus, confidence, probability_maps = staple_consensus(
+                tuple(predictions),
+                prob_threshold=args.staple_prob_threshold,
+                margin_threshold=args.staple_margin_threshold,
+                max_iter=args.staple_max_iter,
+                tol=args.staple_tol,
+                eps=args.staple_eps,
+            )
+            if fallback_index is not None:
+                unresolved = confidence >= 4
+                consensus[unresolved] = predictions[fallback_index][unresolved]
+            description = (
+                f"STAPLE consensus; clip fallback={model_dirs[fallback_index].name}"
+                if fallback_index is not None
+                else "Per-organ binary STAPLE consensus"
+            )
         save_mask(
             consensus,
             images[0],
@@ -1137,6 +1548,13 @@ def main() -> None:
                 images[0],
                 confidence_path,
                 confidence_map_description(args.consensus_mode),
+            )
+        if staple_probability_dir is not None and probability_maps is not None:
+            save_staple_probability_maps(
+                probability_maps,
+                images[0],
+                staple_probability_dir,
+                case_name,
             )
         saved_count += 1
 
