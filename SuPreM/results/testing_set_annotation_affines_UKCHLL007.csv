@@ -1,4 +1,0 @@
-case,reference,annotation,status,shape_match,affine_match,zooms_match,max_abs_affine_diff,shape,reference_shape,zooms,reference_zooms
-UKCHLL007,annotation_1.nii.gz,annotation_1.nii.gz,ok,True,True,True,0.0,512x512x981,512x512x981,0.9765625x0.9765625x1,0.9765625x0.9765625x1
-UKCHLL007,annotation_1.nii.gz,annotation_2.nii.gz,mismatch,True,False,False,1028.8409423828125,512x512x981,512x512x981,0.97656202x0.97656202x0.69999999,0.9765625x0.9765625x1
-UKCHLL007,annotation_1.nii.gz,annotation_3.nii.gz,ok,True,True,True,0.0,512x512x981,512x512x981,0.9765625x0.9765625x1,0.9765625x0.9765625x1
