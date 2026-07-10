@@ -5,6 +5,11 @@
 *.pyc
 *.err
 *.out
+*.joblib
+*.sbatch
+*.log
+*.err
+*.out
 # Ignore WORD directory and all its contents
 WORD/
 .codex/

@@ -1,0 +1,57 @@
+{
+  "background_samples_per_case": 10000,
+  "class_labels": [
+    0,
+    1,
+    2
+  ],
+  "dilation_iterations": 5,
+  "discovered_training_cases": 20,
+  "discovered_validation_cases": 5,
+  "feature_names": [
+    "clip_bg",
+    "clip_pancreas",
+    "clip_kidney",
+    "clip_liver",
+    "segresnet_bg",
+    "segresnet_pancreas",
+    "segresnet_kidney",
+    "segresnet_liver",
+    "swin_bg",
+    "swin_pancreas",
+    "swin_kidney",
+    "swin_liver"
+  ],
+  "label_spaces": [
+    "suprem",
+    "suprem",
+    "btcv"
+  ],
+  "max_depth": 10,
+  "model_dirs": [
+    "clip_universal_unet",
+    "suprem_segresnet",
+    "swinunetr_5050"
+  ],
+  "model_ids": [
+    "clip_unet",
+    "segresnet",
+    "swin5050"
+  ],
+  "n_estimators": 100,
+  "near_organ_background": true,
+  "random_state": 42,
+  "samples_per_class": 5000,
+  "skipped_training_cases": 0,
+  "target_annotation": "annotation_1.nii.gz",
+  "train_cases_root": "/home/s2347484/Seg/training_set/training_set",
+  "train_prediction_root": "/home/s2347484/Seg/SuPreM/results/train_validation_inference/training",
+  "training_sample_counts": {
+    "0": 200000,
+    "1": 100000,
+    "2": 100000
+  },
+  "usable_training_cases": 20,
+  "val_cases_root": "/home/s2347484/Seg/validation_set",
+  "val_prediction_root": "/home/s2347484/Seg/SuPreM/results/train_validation_inference/validation"
+}

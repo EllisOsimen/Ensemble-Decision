@@ -97,8 +97,20 @@ annotation_2 vs annotation_3
 all three annotations together
 ```
 
-This script does not use model predictions. It gives a human inter-rater
-agreement baseline.
+It can also include one or more prediction directories as extra raters without
+copying those predictions into `testing_set`. Prediction masks must already be
+in the testing-set label space:
+
+```bash
+python evaluation/evaluate_testing_set_human_agreement.py \
+  --cases-root /home/s2347484/Seg/testing_set \
+  --prediction-dir weighted=results/CURVAS_INFERENCE/agreement_masks_weighted_65case \
+  --output-dir results/testing_set_human_plus_weighted \
+  --skip-nsd
+```
+
+Prediction files are matched as flat `UKCHLL003.nii.gz`/`UKCHLL003.nii` files,
+or as `UKCHLL003/agreement_mask.nii.gz` under the prediction directory.
 
 ### `check_testing_set_annotation_affines.py`
 
@@ -426,6 +438,17 @@ python evaluation/evaluate_testing_set_human_agreement.py \
   --cases-root /home/s2347484/Seg/testing_set \
   --output-dir results/testing_set_human_agreement \
   --exclude-case UKCHLL007
+```
+
+Run human agreement and compare the same annotations against an external
+prediction directory:
+
+```bash
+python evaluation/evaluate_testing_set_human_agreement.py \
+  --cases-root /home/s2347484/Seg/testing_set \
+  --output-dir results/testing_set_human_plus_weighted_65case \
+  --prediction-dir weighted=results/CURVAS_INFERENCE/agreement_masks_weighted_65case \
+  --skip-nsd
 ```
 
 ## Revision Note

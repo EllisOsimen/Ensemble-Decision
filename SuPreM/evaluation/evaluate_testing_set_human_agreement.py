@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure human-human agreement across testing_set annotations.
+"""Measure agreement across testing_set annotations and optional predictions.
 
 The testing_set label space is:
 
@@ -8,11 +8,13 @@ The testing_set label space is:
   2 = kidney
   3 = liver
 
-The script treats each annotation file as a human rater. It computes:
+The script treats each annotation file as a rater. Optional prediction
+directories can be added as extra raters without copying files into
+testing_set case folders. It computes:
 
   - pairwise per-class Dice, NSD, and binary Cohen kappa
   - pairwise whole-label-map Cohen kappa and exact agreement
-  - three-rater Fleiss kappa across all annotations
+  - Fleiss kappa across all requested label sources
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import csv
 import json
 import math
 from collections import defaultdict
+from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
@@ -40,6 +43,55 @@ TARGET_LABELS = {
     2: "kidney",
     3: "liver",
 }
+
+
+@dataclass(frozen=True)
+class LabelSource:
+    """One label map source to compare for every case."""
+
+    name: str
+    path_by_case: dict[str, Path] | None = None
+
+    @property
+    def pair_label(self) -> str:
+        return nifti_stem(self.name)
+
+    def path_for_case(self, case_name: str, case_dir: Path) -> Path:
+        if self.path_by_case is None:
+            path = case_dir / self.name
+        else:
+            path = self.path_by_case[case_name]
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing label source for {case_name}: {path}")
+        return path
+
+
+def nifti_stem(name: str) -> str:
+    """Strip common NIfTI suffixes without mangling .nii.gz names."""
+
+    if name.endswith(".nii.gz"):
+        return name[:-7]
+    if name.endswith(".nii"):
+        return name[:-4]
+    return Path(name).stem
+
+
+def parse_prediction_source(value: str) -> tuple[str | None, Path]:
+    """Parse --prediction-dir values formatted as DIR or NAME=DIR."""
+
+    if "=" in value:
+        name, directory_text = value.split("=", 1)
+        name = name.strip()
+        if not name:
+            raise argparse.ArgumentTypeError("Prediction source name cannot be empty.")
+    else:
+        name = None
+        directory_text = value
+
+    directory = Path(directory_text)
+    if not directory.is_absolute():
+        directory = PROJECT_DIR / directory
+    return name, directory
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +114,19 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=["annotation_1.nii.gz", "annotation_2.nii.gz", "annotation_3.nii.gz"],
         help="Annotation filenames inside each case directory.",
+    )
+    parser.add_argument(
+        "--prediction-dir",
+        dest="prediction_dirs",
+        action="append",
+        type=parse_prediction_source,
+        default=[],
+        help=(
+            "Prediction directory to include as an extra rater. Use DIR or NAME=DIR. "
+            "Files are matched as DIR/UKCHLL003.nii.gz, DIR/UKCHLL003.nii, or "
+            "DIR/UKCHLL003/agreement_mask.nii.gz. Repeat for multiple directories. "
+            "Predictions must already use the 0-3 testing-set label space."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -144,6 +209,48 @@ def case_directories(root: Path) -> dict[str, Path]:
     if not cases:
         raise FileNotFoundError(f"No case directories found in {root}")
     return cases
+
+
+def prediction_files(directory: Path) -> dict[str, Path]:
+    """Return prediction files keyed by case name for common inference layouts."""
+
+    if not directory.is_dir():
+        raise NotADirectoryError(f"Prediction directory does not exist: {directory}")
+
+    files: dict[str, Path] = {}
+
+    def add(case_name: str, path: Path) -> None:
+        previous = files.get(case_name)
+        if previous is not None and previous != path:
+            raise ValueError(
+                f"Ambiguous predictions for {case_name} in {directory}: "
+                f"{previous} and {path}"
+            )
+        files[case_name] = path
+
+    for path in sorted(directory.iterdir()):
+        if path.is_file() and (path.name.endswith(".nii.gz") or path.name.endswith(".nii")):
+            add(nifti_stem(path.name), path)
+        elif path.is_dir():
+            for candidate_name in [
+                "agreement_mask.nii.gz",
+                "agreement_mask.nii",
+                f"{path.name}.nii.gz",
+                f"{path.name}.nii",
+                "prediction.nii.gz",
+                "prediction.nii",
+            ]:
+                candidate = path / candidate_name
+                if candidate.is_file():
+                    add(path.name, candidate)
+                    break
+
+    if not files:
+        raise FileNotFoundError(
+            f"No predictions found in {directory}. Expected flat case files "
+            "or case subdirectories containing agreement_mask.nii.gz."
+        )
+    return files
 
 
 def validate_grid(case_name: str, reference_image, moving_image, moving_name: str, ignore_affine: bool) -> None:
@@ -403,10 +510,41 @@ def main() -> None:
     # Decide which cases are in this run before loading any large NIfTI arrays.
     args.output_dir.mkdir(parents=True, exist_ok=True)
     case_dirs = case_directories(args.cases_root)
+    sources = [LabelSource(annotation_name) for annotation_name in args.annotations]
+    prediction_source_info = []
+    for raw_name, directory in args.prediction_dirs:
+        files = prediction_files(directory)
+        name = raw_name or directory.name
+        sources.append(LabelSource(name, files))
+        prediction_source_info.append({"name": name, "directory": str(directory)})
+    source_names = [source.name for source in sources]
+    if len(source_names) != len(set(source_names)):
+        raise ValueError(f"Label source names must be unique: {source_names}")
+
     case_names = sorted(case_dirs)
+    for source in sources:
+        if source.path_by_case is None:
+            continue
+        missing_predictions = sorted(set(case_names) - set(source.path_by_case))
+        if missing_predictions:
+            print(
+                f"WARNING: {source.name} is missing {len(missing_predictions)} prediction(s), "
+                f"e.g. {missing_predictions[:3]}"
+            )
+        extra_predictions = sorted(set(source.path_by_case) - set(case_names))
+        if extra_predictions:
+            print(
+                f"WARNING: {source.name} has {len(extra_predictions)} prediction(s) without "
+                f"testing-set case folders, e.g. {extra_predictions[:3]}"
+            )
+        case_names = sorted(set(case_names) & set(source.path_by_case))
+
     if args.case_name is not None:
         if args.case_name not in case_dirs:
             raise FileNotFoundError(f"{args.case_name} not found in {args.cases_root}")
+        for source in sources:
+            if source.path_by_case is not None and args.case_name not in source.path_by_case:
+                raise FileNotFoundError(f"{args.case_name} not found for {source.name}")
         case_names = [args.case_name]
     excluded_cases = set(args.exclude_case)
     case_names = [case_name for case_name in case_names if case_name not in excluded_cases]
@@ -431,6 +569,11 @@ def main() -> None:
     with (args.output_dir / "run_config.txt").open("w") as handle:
         handle.write(f"cases_root={args.cases_root}\n")
         handle.write(f"annotations={','.join(args.annotations)}\n")
+        handle.write(
+            "prediction_dirs="
+            + json.dumps(prediction_source_info, sort_keys=True)
+            + "\n"
+        )
         handle.write(f"excluded_cases={','.join(sorted(excluded_cases))}\n")
         handle.write(f"nsd_tolerance_mm={args.nsd_tolerance_mm}\n")
         handle.write(f"ignore_affine={args.ignore_affine}\n")
@@ -441,13 +584,12 @@ def main() -> None:
         case_dir = case_dirs[case_name]
         loaded = []
 
-        # Load all requested annotations for this case. Each annotation is one
-        # rater's integer label map.
-        for annotation_name in args.annotations:
-            path = case_dir / annotation_name
-            if not path.is_file():
-                raise FileNotFoundError(f"Missing annotation file: {path}")
-            loaded.append((annotation_name, *load_integer_mask(path)))
+        # Load all requested label sources for this case. Annotation files are
+        # read from the case folder; prediction sources resolve through their
+        # external directory.
+        for source in sources:
+            path = source.path_for_case(case_name, case_dir)
+            loaded.append((source.name, *load_integer_mask(path)))
 
         # Use the first annotation as the reference grid. All other annotations
         # must match this grid unless --ignore-affine is explicitly used.
@@ -456,13 +598,15 @@ def main() -> None:
             validate_grid(case_name, reference_image, image, annotation_name, args.ignore_affine)
 
         spacing = tuple(float(value) for value in reference_image.header.get_zooms()[:3])
-        masks_by_name = {annotation_name: mask for annotation_name, _image, mask in loaded}
+        masks_by_name = {source_name: mask for source_name, _image, mask in loaded}
 
-        # Compare each annotator pair: 1 vs 2, 1 vs 3, and 2 vs 3.
-        for first_name, second_name in combinations(args.annotations, 2):
+        # Compare every source pair: human-human and, if requested,
+        # human-prediction/prediction-prediction.
+        source_pair_labels = {source.name: source.pair_label for source in sources}
+        for first_name, second_name in combinations(source_names, 2):
             first = masks_by_name[first_name]
             second = masks_by_name[second_name]
-            pair_name = f"{first_name[:-7]}_vs_{second_name[:-7]}"
+            pair_name = f"{source_pair_labels[first_name]}_vs_{source_pair_labels[second_name]}"
             confusion = pair_confusion(first, second)
 
             # Whole-map pairwise metrics: multiclass kappa and exact agreement.
@@ -518,8 +662,10 @@ def main() -> None:
                 if not math.isnan(kappa):
                     item["binary_kappa"].append(kappa)
 
-        # Fleiss kappa evaluates all human annotations together, not pairwise.
-        annotations = [masks_by_name[name] for name in args.annotations]
+        # Fleiss kappa evaluates all requested sources together. If a prediction
+        # directory is provided, the prediction is intentionally included as an
+        # extra rater to mirror the pairwise tables.
+        annotations = [masks_by_name[source.name] for source in sources]
         case_fleiss = {
             "case": case_name,
             "fleiss_kappa": fleiss_kappa(annotations, sorted(TARGET_LABELS)),
@@ -555,6 +701,8 @@ def main() -> None:
     overall = {
         "cases_root": str(args.cases_root),
         "annotations": args.annotations,
+        "prediction_dirs": prediction_source_info,
+        "sources": [source.name for source in sources],
         "excluded_cases": sorted(excluded_cases),
         "cases": len(case_names),
         "nsd_tolerance_mm": args.nsd_tolerance_mm,

@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-# Compute human-human agreement across testing_set annotations.
+# Compute agreement across testing_set annotations, optionally including
+# external prediction directories as extra raters.
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
@@ -27,6 +28,13 @@ set -euo pipefail
 #   sbatch sbatch/evaluate_testing_set_human_agreement.sbatch \
 #     results/testing_set_human_agreement_no_nsd \
 #     /home/s2347484/Seg/testing_set \
+#     --skip-nsd
+#
+#   # Compare human annotations with an external prediction directory:
+#   sbatch sbatch/evaluate_testing_set_human_agreement.sbatch \
+#     results/testing_set_human_plus_weighted_65case \
+#     /home/s2347484/Seg/testing_set \
+#     --prediction-dir weighted=results/CURVAS_INFERENCE/agreement_masks_weighted_65case \
 #     --skip-nsd
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
