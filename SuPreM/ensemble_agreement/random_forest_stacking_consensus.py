@@ -347,10 +347,48 @@ def discover_prediction_file(prediction_root: Path, model_dir: Path, case_id: st
     return loose_files[0] if loose_files else None
 
 
-def load_label_image(path: Path) -> tuple[np.ndarray, nib.Nifti1Image]:
+def load_label_image(
+    path: Path,
+    atol: float = 1e-3,
+) -> tuple[np.ndarray, nib.Nifti1Image]:
+    """Load an integer label map without truncating scaled NIfTI values.
+
+    NIfTI integer images may use a slope/intercept when nibabel decodes them.
+    Values intended to be 1, 2, and 3 can consequently be represented as
+    0.9999999998, 1.9999999995, and 2.9999999993. Casting those values directly
+    to an integer shifts every foreground class down by one, so floating-point
+    data must be checked and rounded first.
+    """
+
     image = nib.load(str(path))
-    data = np.asanyarray(image.dataobj).astype(np.int16, copy=False)
+    data = np.asanyarray(image.dataobj)
+    if not np.issubdtype(data.dtype, np.integer):
+        rounded = np.rint(data)
+        if not np.all(np.isclose(data, rounded, rtol=0.0, atol=atol)):
+            raise ValueError(f"{path} contains non-integer label values.")
+        data = rounded
+    data = data.astype(np.int16, copy=False)
     return data, image
+
+
+def validate_training_class_coverage(labels: np.ndarray) -> None:
+    """Fail before fitting if the sampled targets omit a CURVAS class."""
+
+    observed = {int(label) for label in np.unique(labels)}
+    expected = set(CURVAS_LABELS)
+    missing = sorted(expected - observed)
+    unexpected = sorted(observed - expected)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append(f"missing expected classes {missing}")
+        if unexpected:
+            details.append(f"found unexpected classes {unexpected}")
+        raise RuntimeError(
+            "Invalid sampled training-label coverage: "
+            + "; ".join(details)
+            + f". Observed classes: {sorted(observed)}."
+        )
 
 
 def load_remapped_prediction(
@@ -499,6 +537,7 @@ def collect_training_samples(
 
     X = np.concatenate(feature_blocks, axis=0)
     y = np.concatenate(label_blocks, axis=0)
+    validate_training_class_coverage(y)
     sample_counts = {str(label): int(count) for label, count in sorted(Counter(y.tolist()).items())}
     return X, y, sample_counts, usable_cases, skipped_cases
 

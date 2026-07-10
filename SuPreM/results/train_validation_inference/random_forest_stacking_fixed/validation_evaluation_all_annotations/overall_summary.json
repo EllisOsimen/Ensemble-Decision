@@ -1,0 +1,27 @@
+{
+  "cases_root": "/home/s2347484/Seg/validation_set",
+  "annotations": [
+    "annotation_1.nii.gz",
+    "annotation_2.nii.gz",
+    "annotation_3.nii.gz"
+  ],
+  "prediction_dirs": [
+    {
+      "name": "random_forest",
+      "directory": "/home/s2347484/Seg/SuPreM/results/train_validation_inference/random_forest_stacking_fixed/predictions"
+    }
+  ],
+  "sources": [
+    "annotation_1.nii.gz",
+    "annotation_2.nii.gz",
+    "annotation_3.nii.gz",
+    "random_forest"
+  ],
+  "excluded_cases": [],
+  "cases": 5,
+  "nsd_tolerance_mm": 1.0,
+  "mean_case_fleiss_kappa": 0.958439264390065,
+  "mean_case_foreground_fleiss_kappa": 0.8203050344407004,
+  "cases_with_fleiss_kappa": 5,
+  "cases_with_foreground_fleiss_kappa": 5
+}

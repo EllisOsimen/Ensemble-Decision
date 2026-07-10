@@ -3,7 +3,8 @@
   "class_labels": [
     0,
     1,
-    2
+    2,
+    3
   ],
   "dilation_iterations": 5,
   "discovered_training_cases": 20,
@@ -49,7 +50,8 @@
   "training_sample_counts": {
     "0": 200000,
     "1": 100000,
-    "2": 100000
+    "2": 100000,
+    "3": 100000
   },
   "usable_training_cases": 20,
   "val_cases_root": "/home/s2347484/Seg/validation_set",

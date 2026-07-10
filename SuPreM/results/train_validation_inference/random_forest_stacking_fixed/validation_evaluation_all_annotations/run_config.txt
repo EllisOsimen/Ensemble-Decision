@@ -1,0 +1,8 @@
+cases_root=/home/s2347484/Seg/validation_set
+annotations=annotation_1.nii.gz,annotation_2.nii.gz,annotation_3.nii.gz
+prediction_dirs=[{"directory": "/home/s2347484/Seg/SuPreM/results/train_validation_inference/random_forest_stacking_fixed/predictions", "name": "random_forest"}]
+excluded_cases=
+nsd_tolerance_mm=1.0
+ignore_affine=False
+include_background_nsd=False
+skip_nsd=False
