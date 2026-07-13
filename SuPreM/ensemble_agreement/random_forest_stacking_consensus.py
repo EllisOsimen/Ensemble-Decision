@@ -161,6 +161,17 @@ def flatten_repeated(values: list[list] | None) -> list | None:
     return [item for group in values for item in group]
 
 
+def parse_optional_max_depth(value: str) -> int | None:
+    """Accept a positive tree depth or ``none`` for unrestricted trees."""
+
+    if value.lower() in {"none", "unlimited"}:
+        return None
+    depth = int(value)
+    if depth <= 0:
+        raise argparse.ArgumentTypeError("max depth must be positive or 'none'.")
+    return depth
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Supervised random forest stacking for CURVAS consensus masks.",
@@ -205,7 +216,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--near-organ-background", action="store_true")
     parser.add_argument("--dilation-iterations", type=int, default=5)
     parser.add_argument("--n-estimators", type=int, default=100)
-    parser.add_argument("--max-depth", type=int, default=10)
+    parser.add_argument("--max-depth", type=parse_optional_max_depth, default=10)
+    parser.add_argument("--min-samples-leaf", type=int, default=1)
+    parser.add_argument(
+        "--max-features",
+        choices=("sqrt", "all"),
+        default="sqrt",
+        help="Features considered per split; 'all' passes None to scikit-learn.",
+    )
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--predict-chunk-size", type=int, default=1_000_000)
     parser.add_argument("--skip-missing", action="store_true")
@@ -606,9 +624,12 @@ def train_random_forest(
 ) -> RandomForestClassifier:
     """Fit the second-level model that learns how to combine base predictions."""
 
+    max_features = None if args.max_features == "all" else args.max_features
     classifier = RandomForestClassifier(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
+        min_samples_leaf=args.min_samples_leaf,
+        max_features=max_features,
         # Weight rare target classes more heavily in each tree's loss.
         class_weight="balanced",
         n_jobs=-1,
@@ -738,6 +759,8 @@ def save_model_and_metadata(
         "dilation_iterations": args.dilation_iterations,
         "n_estimators": args.n_estimators,
         "max_depth": args.max_depth,
+        "min_samples_leaf": args.min_samples_leaf,
+        "max_features": args.max_features,
         "random_state": args.random_state,
         "feature_names": FEATURE_NAMES,
         "class_labels": [int(label) for label in classifier.classes_],
@@ -799,6 +822,7 @@ def main() -> None:
     print(
         "Random forest parameters: "
         f"n_estimators={args.n_estimators}, max_depth={args.max_depth}, "
+        f"min_samples_leaf={args.min_samples_leaf}, max_features={args.max_features}, "
         f"class_weight=balanced, n_jobs=-1, random_state={args.random_state}"
     )
 

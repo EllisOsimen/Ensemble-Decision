@@ -14,6 +14,8 @@ timm
 elasticdeform
 numpy
 nibabel
+joblib
+scikit-learn
 scipy
 surface-distance
 pandas
