@@ -9,6 +9,16 @@ target label space:
   2 = kidney
   3 = liver
 
+In stacking, the three segmentation models are the "base" models and the
+random forest is the "meta" model.  For each voxel, the forest sees only the
+three base-model decisions (encoded as 12 binary features) and learns which
+CURVAS label best matches a human annotation.  The high-level workflow is:
+
+  1. Remap every base model's native labels into the common CURVAS labels.
+  2. Sample labelled voxels from the training scans.
+  3. Train the forest to map the three predictions to the human label.
+  4. Apply that learned mapping to every voxel in each validation scan.
+
 Example using the local train/validation inference split:
 
 python -u ensemble_agreement/random_forest_stacking_consensus.py \
@@ -77,6 +87,9 @@ DEFAULT_OUTPUT_DIR = TRAIN_VAL_ROOT / "random_forest_stacking" / "predictions"
 
 CURVAS_LABELS = (0, 1, 2, 3)
 ORGAN_LABELS = (1, 2, 3)
+# Feature columns must always use this order.  User-supplied model arguments
+# are reordered to match it in resolve_model_specs(), so training and inference
+# cannot silently attach a prediction to the wrong set of columns.
 FEATURE_MODEL_IDS = ("clip_unet", "segresnet", "swin5050")
 SUPPORTED_MODEL_IDS = set(FEATURE_MODEL_IDS)
 SUPPORTED_LABEL_SPACES = {"target", "btcv", "suprem", "word"}
@@ -221,6 +234,8 @@ def default_label_spaces() -> list[str]:
 
 
 def resolve_model_specs(args: argparse.Namespace) -> list[ModelSpec]:
+    """Validate the three base models and return them in feature-column order."""
+
     model_dirs = flatten_repeated(args.model_dirs) or default_model_dirs()
     model_ids = flatten_repeated(args.model_ids) or default_model_ids()
     label_spaces = flatten_repeated(args.label_spaces) or default_label_spaces()
@@ -244,6 +259,8 @@ def resolve_model_specs(args: argparse.Namespace) -> list[ModelSpec]:
 
 
 def remap_to_curvas(labels: np.ndarray, label_space: str) -> np.ndarray:
+    """Collapse a model's native classes into background/pancreas/kidney/liver."""
+
     label_space = label_space.lower()
     if label_space == "target":
         remapped = labels
@@ -265,7 +282,17 @@ def map_labels(labels: np.ndarray, mapping: dict[int, int]) -> np.ndarray:
 
 
 def one_hot_encode_predictions(predictions: list[np.ndarray]) -> np.ndarray:
-    """One-hot encode clip, segresnet, and swin labels into 12 binary features."""
+    """One-hot encode clip, segresnet, and swin labels into 12 binary features.
+
+    Each model contributes four columns, one per CURVAS class.  For example, a
+    voxel predicted as pancreas (1) by clip, kidney (2) by segresnet, and liver
+    (3) by swin becomes::
+
+        [0,1,0,0 | 0,0,1,0 | 0,0,0,1]
+
+    This representation treats class IDs as categories, rather than incorrectly
+    suggesting that liver (3) is numerically "larger" than pancreas (1).
+    """
 
     if len(predictions) != 3:
         raise ValueError("Expected exactly three prediction arrays.")
@@ -275,13 +302,14 @@ def one_hot_encode_predictions(predictions: list[np.ndarray]) -> np.ndarray:
     if any(prediction.shape[0] != n_voxels for prediction in flattened):
         raise ValueError("All prediction arrays must contain the same number of voxels.")
 
+    # Set exactly one of each model's four columns to 1 for every voxel.
     features = np.zeros((n_voxels, 12), dtype=np.uint8)
     for model_index, labels in enumerate(flattened):
         if np.any((labels < 0) | (labels > 3)):
             bad = np.unique(labels[(labels < 0) | (labels > 3)])
             raise ValueError(f"Predictions must be in CURVAS label space 0-3; got {bad[:10]}.")
         row_indices = np.arange(n_voxels)
-        features[row_indices, model_index * 4 + labels] = 1
+        features[row_indices, model_index * 4 + labels] = 1 # turns the model prediction into a one-hot encoded feature vector
     return features
 
 
@@ -290,12 +318,15 @@ def is_nifti_file(path: Path) -> bool:
 
 
 def is_obvious_non_label_file(path: Path) -> bool:
+    """Heuristic to exclude probability-like outputs from the hard-label search."""
     name = path.name.lower()
     blocked = ("prob", "proba", "confidence", "conf", "softmax", "logit", "uncertainty")
     return any(token in name for token in blocked)
 
 
 def discover_case_dirs(cases_root: Path, target_annotation: str) -> dict[str, Path]:
+    """Find case directories at the root or up to two directory levels below it."""
+
     if not cases_root.is_dir():
         raise NotADirectoryError(f"Cases root does not exist: {cases_root}")
 
@@ -319,6 +350,8 @@ def discover_case_dirs(cases_root: Path, target_annotation: str) -> dict[str, Pa
 
 
 def discover_prediction_file(prediction_root: Path, model_dir: Path, case_id: str) -> Path | None:
+    """Find a case's hard-label NIfTI while excluding probability-like outputs."""
+
     model_root = resolve_path(model_dir, prediction_root)
     if not model_root.is_dir():
         return None
@@ -365,7 +398,7 @@ def load_label_image(
     if not np.issubdtype(data.dtype, np.integer):
         rounded = np.rint(data)
         if not np.all(np.isclose(data, rounded, rtol=0.0, atol=atol)):
-            raise ValueError(f"{path} contains non-integer label values.")
+            raise ValueError(f"{path} contains non-integer label values.") # If not integer raise error
         data = rounded
     data = data.astype(np.int16, copy=False)
     return data, image
@@ -396,6 +429,7 @@ def load_remapped_prediction(
     spec: ModelSpec,
     case_id: str,
 ) -> tuple[np.ndarray, nib.Nifti1Image, Path]:
+    """Load a single model's prediction and remap it to the CURVAS label space."""
     prediction_path = discover_prediction_file(prediction_root, spec.model_dir, case_id)
     if prediction_path is None:
         model_root = resolve_path(spec.model_dir, prediction_root)
@@ -409,6 +443,8 @@ def load_case_predictions(
     specs: list[ModelSpec],
     case_id: str,
 ) -> tuple[list[np.ndarray], nib.Nifti1Image, list[Path]]:
+    """Load all three remapped predictions and ensure their voxel grids match."""
+
     predictions: list[np.ndarray] = []
     paths: list[Path] = []
     reference_image: nib.Nifti1Image | None = None
@@ -417,6 +453,7 @@ def load_case_predictions(
     for spec in specs:
         prediction, image, path = load_remapped_prediction(prediction_root, spec, case_id)
         if reference_shape is None:
+            #First prediction sets the reference shape and image for the case, just shape not affine etc.
             reference_shape = prediction.shape
             reference_image = image
         elif prediction.shape != reference_shape:
@@ -433,10 +470,11 @@ def load_case_predictions(
 
 
 def sample_flat_indices(indices: np.ndarray, max_samples: int, rng: np.random.Generator) -> np.ndarray:
+    """Randomly sample up to max_samples from a flat array of voxel indices."""
     if max_samples <= 0 or indices.size == 0:
         return np.empty((0,), dtype=np.int64)
     sample_size = min(max_samples, indices.size)
-    return rng.choice(indices, size=sample_size, replace=False)
+    return rng.choice(indices, size=sample_size, replace=False) # Same voxel cant be sampled twice without replacement
 
 
 def sample_background_indices(
@@ -445,12 +483,21 @@ def sample_background_indices(
     args: argparse.Namespace,
     rng: np.random.Generator,
 ) -> np.ndarray:
+    """Choose background examples, optionally concentrating on difficult borders.
+
+    Most voxels in an abdominal scan are easy background.  Sampling uniformly
+    can therefore teach the forest little beyond "predict background".  With
+    --near-organ-background, priority goes to background near any predicted
+    organ, where false positives and boundary disagreements actually occur.
+    """
+
     target_flat = target.reshape(-1)
 
     if args.near_organ_background:
         model_foreground_union = np.zeros(target.shape, dtype=bool)
         for prediction in predictions:
             model_foreground_union |= prediction > 0
+        # Dilation creates a band around the union of all predicted organs.
         near_foreground = binary_dilation(
             model_foreground_union,
             iterations=args.dilation_iterations,
@@ -458,6 +505,8 @@ def sample_background_indices(
         candidate_background = (target == 0) & near_foreground
         near_indices = np.flatnonzero(candidate_background.reshape(-1))
         selected = sample_flat_indices(near_indices, args.background_samples_per_case, rng)
+        # If the boundary band is too small, fill the quota from all remaining
+        # true-background voxels rather than reducing this case's sample count.
         remaining_needed = args.background_samples_per_case - selected.size
         if remaining_needed <= 0:
             return selected
@@ -480,6 +529,8 @@ def collect_training_samples(
     specs: list[ModelSpec],
     args: argparse.Namespace,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, int], int, int]:
+    """Build the meta-model's feature matrix X and human-label vector y."""
+
     rng = np.random.default_rng(args.random_state)
     feature_blocks: list[np.ndarray] = []
     label_blocks: list[np.ndarray] = []
@@ -488,11 +539,12 @@ def collect_training_samples(
 
     iterator = sorted(train_cases.items())
     if tqdm is not None:
-        iterator = tqdm(iterator, desc="Training cases")
+        iterator = tqdm(iterator, desc="Training cases") #Progress bar for training cases
 
     for case_id, case_dir in iterator:
         target_path = case_dir / args.target_annotation
         try:
+            #Loads the target label image and remaps it to CURVAS label space, then loads the predictions for the case
             target, _ = load_label_image(target_path)
             target = remap_to_curvas(target, "target")
             predictions, _, _ = load_case_predictions(prediction_root, specs, case_id)
@@ -501,7 +553,7 @@ def collect_training_samples(
             print(f"WARNING: skipping training case {case_id}: {exc}")
             continue
 
-        if any(prediction.shape != target.shape for prediction in predictions):
+        if any(prediction.shape != target.shape for prediction in predictions): # check if shapes match
             skipped_cases += 1
             shapes = [prediction.shape for prediction in predictions]
             print(
@@ -510,12 +562,16 @@ def collect_training_samples(
             )
             continue
 
-        target_flat = target.reshape(-1)
+        # Flattening preserves voxel alignment: index i refers to the same
+        # physical grid location in the target and all three predictions.
+        target_flat = target.reshape(-1) # 3d mask converted to 1d array
         sampled_indices: list[np.ndarray] = []
+        # Cap each organ separately so large organs (especially liver) do not
+        # overwhelm the smaller pancreas class during training.
         for label in ORGAN_LABELS:
             label_indices = np.flatnonzero(target_flat == label)
             sampled_indices.append(sample_flat_indices(label_indices, args.samples_per_class, rng))
-        sampled_indices.append(sample_background_indices(target, predictions, args, rng))
+        sampled_indices.append(sample_background_indices(target, predictions, args, rng)) # Sample background indices based on the target and predictions
 
         case_indices = np.concatenate(sampled_indices)
         if case_indices.size == 0:
@@ -524,6 +580,7 @@ def collect_training_samples(
             continue
 
         labels = target_flat[case_indices].astype(np.uint8, copy=False)
+        # Use the same sampled indices for every base model and the target.
         prediction_samples = [
             prediction.reshape(-1)[case_indices].astype(np.uint8, copy=False)
             for prediction in predictions
@@ -535,7 +592,7 @@ def collect_training_samples(
     if not feature_blocks:
         raise RuntimeError("No usable training samples were collected.")
 
-    X = np.concatenate(feature_blocks, axis=0)
+    X = np.concatenate(feature_blocks, axis=0) # each row is a voxel, each column is a feature (one-hot encoded predictions from the three models)
     y = np.concatenate(label_blocks, axis=0)
     validate_training_class_coverage(y)
     sample_counts = {str(label): int(count) for label, count in sorted(Counter(y.tolist()).items())}
@@ -547,9 +604,12 @@ def train_random_forest(
     y: np.ndarray,
     args: argparse.Namespace,
 ) -> RandomForestClassifier:
+    """Fit the second-level model that learns how to combine base predictions."""
+
     classifier = RandomForestClassifier(
         n_estimators=args.n_estimators,
         max_depth=args.max_depth,
+        # Weight rare target classes more heavily in each tree's loss.
         class_weight="balanced",
         n_jobs=-1,
         random_state=args.random_state,
@@ -559,6 +619,12 @@ def train_random_forest(
 
 
 def confidence_from_predictions(predicted: np.ndarray, max_probability: np.ndarray) -> np.ndarray:
+    """Convert forest vote probability to the project's 1-5 confidence codes.
+
+    Codes 1-4 are increasingly uncertain foreground predictions.  Background
+    always receives code 5, so this is not a symmetric uncertainty map.
+    """
+
     confidence = np.full(predicted.shape, 5, dtype=np.uint8)
     foreground = predicted > 0
     confidence[foreground & (max_probability >= 0.90)] = 1
@@ -583,6 +649,8 @@ def run_validation_inference(
     specs: list[ModelSpec],
     args: argparse.Namespace,
 ) -> None:
+    """Fuse each validation case and write its consensus and confidence masks."""
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     iterator = sorted(val_cases)
@@ -606,16 +674,22 @@ def run_validation_inference(
                 continue
             raise
 
+        # The forest operates on independent voxel rows, so flatten the spatial
+        # arrays now and restore their 3-D shape after prediction.
         flat_predictions = [prediction.reshape(-1) for prediction in predictions]
         n_voxels = flat_predictions[0].shape[0]
         predicted_flat = np.empty(n_voxels, dtype=np.uint8)
         confidence_flat = np.empty(n_voxels, dtype=np.uint8)
 
+        # A full scan can contain hundreds of millions of feature values.
+        # Chunking limits peak memory without changing any voxel's prediction.
         for start in range(0, n_voxels, args.predict_chunk_size):
             stop = min(start + args.predict_chunk_size, n_voxels)
             chunk_predictions = [prediction[start:stop] for prediction in flat_predictions]
             X_chunk = one_hot_encode_predictions(chunk_predictions)
             predicted_chunk = classifier.predict(X_chunk).astype(np.uint8, copy=False)
+            # predict_proba averages the trees' class probabilities; the
+            # winning class's probability drives the confidence code.
             probabilities = classifier.predict_proba(X_chunk)
             max_probability = np.max(probabilities, axis=1)
             predicted_flat[start:stop] = predicted_chunk
@@ -644,6 +718,8 @@ def save_model_and_metadata(
     val_cases_count: int,
     args: argparse.Namespace,
 ) -> Path:
+    """Persist the fitted forest plus enough context to reproduce its features."""
+
     args.model_output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(classifier, args.model_output)
 
