@@ -10,9 +10,10 @@ target label space:
   3 = liver
 
 In stacking, the three segmentation models are the "base" models and the
-random forest is the "meta" model.  For each voxel, the forest sees only the
-three base-model decisions (encoded as 12 binary features) and learns which
-CURVAS label best matches a human annotation.  The high-level workflow is:
+random forest is the "meta" model.  For each voxel, the forest sees the three
+base-model decisions (encoded as 12 binary features) and, when requested, one
+continuous confidence feature per model.  It learns which CURVAS label best
+matches a human annotation.  The high-level workflow is:
 
   1. Remap every base model's native labels into the common CURVAS labels.
   2. Sample labelled voxels from the training scans.
@@ -22,19 +23,22 @@ CURVAS label best matches a human annotation.  The high-level workflow is:
 Example using the local train/validation inference split:
 
 python -u ensemble_agreement/random_forest_stacking_consensus.py \
-  --train-prediction-root /home/s2347484/Seg/SuPreM/results/train_validation_inference/training \
+  --train-prediction-root /home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training \
   --train-cases-root /home/s2347484/Seg/training_set/training_set \
-  --val-prediction-root /home/s2347484/Seg/SuPreM/results/train_validation_inference/validation \
+  --val-prediction-root /home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/validation \
   --val-cases-root /home/s2347484/Seg/validation_set \
   --model-dir swinunetr_5050 \
   --model-id swin5050 \
   --label-space btcv \
+  --confidence-dir swinunetr_5050_confidence \
   --model-dir clip_universal_unet \
   --model-id clip_unet \
   --label-space suprem \
+  --confidence-dir clip_universal_unet_confidence \
   --model-dir suprem_segresnet \
   --model-id segresnet \
   --label-space suprem \
+  --confidence-dir suprem_segresnet_confidence \
   --target-annotation annotation_1.nii.gz \
   --samples-per-class 5000 \
   --background-samples-per-case 10000 \
@@ -77,13 +81,24 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 SEG_ROOT = PROJECT_DIR.parent
 TRAIN_VAL_ROOT = PROJECT_DIR / "results" / "train_validation_inference"
+ALL_CURVAS_INFERENCE_ROOT = (
+    PROJECT_DIR / "results" / "all_curvas_inference_with_confidence"
+)
 
-DEFAULT_TRAIN_PREDICTION_ROOT = TRAIN_VAL_ROOT / "training"
-DEFAULT_VAL_PREDICTION_ROOT = TRAIN_VAL_ROOT / "validation"
+DEFAULT_TRAIN_PREDICTION_ROOT = ALL_CURVAS_INFERENCE_ROOT / "training"
+DEFAULT_VAL_PREDICTION_ROOT = ALL_CURVAS_INFERENCE_ROOT / "validation"
 DEFAULT_TRAIN_CASES_ROOT = SEG_ROOT / "training_set" / "training_set"
 DEFAULT_VAL_CASES_ROOT = SEG_ROOT / "validation_set"
-DEFAULT_MODEL_OUTPUT = TRAIN_VAL_ROOT / "random_forest_stacking" / "rf_stacking.joblib"
-DEFAULT_OUTPUT_DIR = TRAIN_VAL_ROOT / "random_forest_stacking" / "predictions"
+DEFAULT_MODEL_OUTPUT = (
+    ALL_CURVAS_INFERENCE_ROOT
+    / "random_forest_stacking_with_confidence"
+    / "rf_stacking.joblib"
+)
+DEFAULT_OUTPUT_DIR = (
+    ALL_CURVAS_INFERENCE_ROOT
+    / "random_forest_stacking_with_confidence"
+    / "validation_predictions"
+)
 
 CURVAS_LABELS = (0, 1, 2, 3)
 ORGAN_LABELS = (1, 2, 3)
@@ -94,7 +109,7 @@ FEATURE_MODEL_IDS = ("clip_unet", "segresnet", "swin5050")
 SUPPORTED_MODEL_IDS = set(FEATURE_MODEL_IDS)
 SUPPORTED_LABEL_SPACES = {"target", "btcv", "suprem", "word"}
 
-FEATURE_NAMES = [
+LABEL_FEATURE_NAMES = [
     "clip_bg",
     "clip_pancreas",
     "clip_kidney",
@@ -108,6 +123,13 @@ FEATURE_NAMES = [
     "swin_kidney",
     "swin_liver",
 ]
+CONFIDENCE_FEATURE_NAMES = [
+    "clip_confidence",
+    "segresnet_confidence",
+    "swin_confidence",
+]
+# Kept as an alias for code that imports the original label-only feature list.
+FEATURE_NAMES = LABEL_FEATURE_NAMES
 
 # Copied from consensus_agreement_mask.py so this script remains standalone.
 BTCV_TO_TARGET = {
@@ -153,6 +175,7 @@ class ModelSpec:
     model_dir: Path
     model_id: str
     label_space: str
+    confidence_dir: Path | None = None
 
 
 def flatten_repeated(values: list[list] | None) -> list | None:
@@ -210,6 +233,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Label space matching --model-dir order.",
     )
+    parser.add_argument(
+        "--confidence-dir",
+        dest="confidence_dirs",
+        type=Path,
+        nargs="+",
+        action="append",
+        default=None,
+        help=(
+            "Optional confidence directory for each model, matching --model-dir "
+            "order. Pass exactly three directories to add one confidence feature "
+            "per model; omit this argument for the 12-feature label-only model."
+        ),
+    )
     parser.add_argument("--target-annotation", default="annotation_1.nii.gz")
     parser.add_argument("--samples-per-class", type=int, default=5000)
     parser.add_argument("--background-samples-per-case", type=int, default=10000)
@@ -257,6 +293,7 @@ def resolve_model_specs(args: argparse.Namespace) -> list[ModelSpec]:
     model_dirs = flatten_repeated(args.model_dirs) or default_model_dirs()
     model_ids = flatten_repeated(args.model_ids) or default_model_ids()
     label_spaces = flatten_repeated(args.label_spaces) or default_label_spaces()
+    confidence_dirs = flatten_repeated(getattr(args, "confidence_dirs", None))
 
     if not (len(model_dirs) == len(model_ids) == len(label_spaces) == 3):
         raise ValueError(
@@ -267,13 +304,46 @@ def resolve_model_specs(args: argparse.Namespace) -> list[ModelSpec]:
             "Expected model IDs clip_unet, segresnet, and swin5050 exactly once; "
             f"got {model_ids}."
         )
+    if confidence_dirs is not None and len(confidence_dirs) != 3:
+        raise ValueError(
+            "Pass exactly three --confidence-dir values, one for each base model, "
+            "or omit --confidence-dir for label-only features."
+        )
+    if confidence_dirs is None:
+        confidence_dirs = [None, None, None]
 
     specs = [
-        ModelSpec(Path(model_dir), model_id, label_space)
-        for model_dir, model_id, label_space in zip(model_dirs, model_ids, label_spaces)
+        ModelSpec(
+            Path(model_dir),
+            model_id,
+            label_space,
+            Path(confidence_dir) if confidence_dir is not None else None,
+        )
+        for model_dir, model_id, label_space, confidence_dir in zip(
+            model_dirs,
+            model_ids,
+            label_spaces,
+            confidence_dirs,
+        )
     ]
     by_id = {spec.model_id: spec for spec in specs}
     return [by_id[model_id] for model_id in FEATURE_MODEL_IDS]
+
+
+def uses_confidence(specs: list[ModelSpec]) -> bool:
+    """Return whether all three model specifications include confidence maps."""
+
+    configured = [spec.confidence_dir is not None for spec in specs]
+    if any(configured) and not all(configured):
+        raise ValueError("Confidence directories must be configured for all three models.")
+    return all(configured)
+
+
+def feature_names(specs: list[ModelSpec]) -> list[str]:
+    names = list(LABEL_FEATURE_NAMES)
+    if uses_confidence(specs):
+        names.extend(CONFIDENCE_FEATURE_NAMES)
+    return names
 
 
 def remap_to_curvas(labels: np.ndarray, label_space: str) -> np.ndarray:
@@ -299,7 +369,10 @@ def map_labels(labels: np.ndarray, mapping: dict[int, int]) -> np.ndarray:
     return remapped
 
 
-def one_hot_encode_predictions(predictions: list[np.ndarray]) -> np.ndarray:
+def one_hot_encode_predictions(
+    predictions: list[np.ndarray],
+    confidences: list[np.ndarray] | None = None,
+) -> np.ndarray:
     """One-hot encode clip, segresnet, and swin labels into 12 binary features.
 
     Each model contributes four columns, one per CURVAS class.  For example, a
@@ -328,7 +401,26 @@ def one_hot_encode_predictions(predictions: list[np.ndarray]) -> np.ndarray:
             raise ValueError(f"Predictions must be in CURVAS label space 0-3; got {bad[:10]}.")
         row_indices = np.arange(n_voxels)
         features[row_indices, model_index * 4 + labels] = 1 # turns the model prediction into a one-hot encoded feature vector
-    return features
+    if confidences is None:
+        return features
+    if len(confidences) != 3:
+        raise ValueError("Expected exactly three confidence arrays.")
+
+    confidence_columns = []
+    for confidence in confidences:
+        column = np.asarray(confidence, dtype=np.float32).reshape(-1)
+        if column.shape[0] != n_voxels:
+            raise ValueError("Confidence and prediction arrays must contain the same voxels.")
+        if not np.all(np.isfinite(column)):
+            raise ValueError("Confidence arrays contain NaN or infinite values.")
+        if np.any(column < -1e-4) or np.any(column > 1.0 + 1e-4):
+            raise ValueError("Confidence values must lie in the range [0, 1].")
+        confidence_columns.append(np.clip(column, 0.0, 1.0))
+
+    return np.concatenate(
+        [features.astype(np.float32), np.column_stack(confidence_columns)],
+        axis=1,
+    )
 
 
 def is_nifti_file(path: Path) -> bool:
@@ -398,6 +490,38 @@ def discover_prediction_file(prediction_root: Path, model_dir: Path, case_id: st
     return loose_files[0] if loose_files else None
 
 
+def discover_confidence_file(
+    prediction_root: Path,
+    confidence_dir: Path,
+    case_id: str,
+) -> Path | None:
+    """Find a case confidence map in its explicitly configured directory."""
+
+    confidence_root = resolve_path(confidence_dir, prediction_root)
+    if not confidence_root.is_dir():
+        return None
+
+    for candidate in (
+        confidence_root / f"{case_id}.nii.gz",
+        confidence_root / f"{case_id}.nii",
+    ):
+        if is_nifti_file(candidate):
+            return candidate
+
+    nested_dir = confidence_root / case_id
+    if nested_dir.is_dir():
+        nested_files = sorted(path for path in nested_dir.rglob("*") if is_nifti_file(path))
+        if nested_files:
+            return nested_files[0]
+
+    loose_files = sorted(
+        path
+        for path in confidence_root.rglob(f"{case_id}*")
+        if is_nifti_file(path)
+    )
+    return loose_files[0] if loose_files else None
+
+
 def load_label_image(
     path: Path,
     atol: float = 1e-3,
@@ -420,6 +544,22 @@ def load_label_image(
         data = rounded
     data = data.astype(np.int16, copy=False)
     return data, image
+
+
+def load_confidence_image(path: Path) -> tuple[np.ndarray, nib.Nifti1Image]:
+    """Load a scaled NIfTI confidence map as finite float32 values in [0, 1]."""
+
+    image = nib.load(str(path))
+    confidence = np.asarray(image.dataobj, dtype=np.float32)
+    if not np.all(np.isfinite(confidence)):
+        raise ValueError(f"{path} contains NaN or infinite confidence values.")
+    if np.any(confidence < -1e-4) or np.any(confidence > 1.0 + 1e-4):
+        minimum = float(np.min(confidence))
+        maximum = float(np.max(confidence))
+        raise ValueError(
+            f"{path} confidence range [{minimum}, {maximum}] is outside [0, 1]."
+        )
+    return np.clip(confidence, 0.0, 1.0), image
 
 
 def validate_training_class_coverage(labels: np.ndarray) -> None:
@@ -485,6 +625,63 @@ def load_case_predictions(
     if reference_image is None:
         raise RuntimeError(f"No predictions loaded for case {case_id}.")
     return predictions, reference_image, paths
+
+
+def load_case_inputs(
+    prediction_root: Path,
+    specs: list[ModelSpec],
+    case_id: str,
+) -> tuple[
+    list[np.ndarray],
+    list[np.ndarray] | None,
+    nib.Nifti1Image,
+    list[Path],
+    list[Path],
+]:
+    """Load aligned categorical predictions and optional confidence maps."""
+
+    predictions, reference_image, prediction_paths = load_case_predictions(
+        prediction_root,
+        specs,
+        case_id,
+    )
+    if not uses_confidence(specs):
+        return predictions, None, reference_image, prediction_paths, []
+
+    confidences: list[np.ndarray] = []
+    confidence_paths: list[Path] = []
+    for spec, prediction in zip(specs, predictions):
+        if spec.confidence_dir is None:  # Guarded by uses_confidence().
+            raise RuntimeError(f"No confidence directory configured for {spec.model_id}.")
+        confidence_path = discover_confidence_file(
+            prediction_root,
+            spec.confidence_dir,
+            case_id,
+        )
+        if confidence_path is None:
+            confidence_root = resolve_path(spec.confidence_dir, prediction_root)
+            raise FileNotFoundError(
+                f"Missing confidence map for case {case_id} in {confidence_root}"
+            )
+        confidence, confidence_image = load_confidence_image(confidence_path)
+        if confidence.shape != prediction.shape:
+            raise ValueError(
+                f"Confidence shape mismatch for case {case_id}: {confidence_path} "
+                f"has {confidence.shape}, expected {prediction.shape}."
+            )
+        if not np.allclose(
+            confidence_image.affine,
+            reference_image.affine,
+            rtol=1e-5,
+            atol=1e-4,
+        ):
+            raise ValueError(
+                f"Confidence affine mismatch for case {case_id}: {confidence_path}."
+            )
+        confidences.append(confidence)
+        confidence_paths.append(confidence_path)
+
+    return predictions, confidences, reference_image, prediction_paths, confidence_paths
 
 
 def sample_flat_indices(indices: np.ndarray, max_samples: int, rng: np.random.Generator) -> np.ndarray:
@@ -565,7 +762,11 @@ def collect_training_samples(
             #Loads the target label image and remaps it to CURVAS label space, then loads the predictions for the case
             target, _ = load_label_image(target_path)
             target = remap_to_curvas(target, "target")
-            predictions, _, _ = load_case_predictions(prediction_root, specs, case_id)
+            predictions, confidences, _, _, _ = load_case_inputs(
+                prediction_root,
+                specs,
+                case_id,
+            )
         except Exception as exc:
             skipped_cases += 1
             print(f"WARNING: skipping training case {case_id}: {exc}")
@@ -603,7 +804,15 @@ def collect_training_samples(
             prediction.reshape(-1)[case_indices].astype(np.uint8, copy=False)
             for prediction in predictions
         ]
-        feature_blocks.append(one_hot_encode_predictions(prediction_samples))
+        confidence_samples = None
+        if confidences is not None:
+            confidence_samples = [
+                confidence.reshape(-1)[case_indices].astype(np.float32, copy=False)
+                for confidence in confidences
+            ]
+        feature_blocks.append(
+            one_hot_encode_predictions(prediction_samples, confidence_samples)
+        )
         label_blocks.append(labels)
         usable_cases += 1
 
@@ -688,7 +897,11 @@ def run_validation_inference(
 
         print(f"Running validation inference for {case_id}")
         try:
-            predictions, reference_image, _ = load_case_predictions(prediction_root, specs, case_id)
+            predictions, confidences, reference_image, _, _ = load_case_inputs(
+                prediction_root,
+                specs,
+                case_id,
+            )
         except Exception:
             if args.skip_missing:
                 print(f"WARNING: skipping validation case {case_id}: missing or invalid predictions.")
@@ -698,6 +911,11 @@ def run_validation_inference(
         # The forest operates on independent voxel rows, so flatten the spatial
         # arrays now and restore their 3-D shape after prediction.
         flat_predictions = [prediction.reshape(-1) for prediction in predictions]
+        flat_confidences = (
+            [confidence.reshape(-1) for confidence in confidences]
+            if confidences is not None
+            else None
+        )
         n_voxels = flat_predictions[0].shape[0]
         predicted_flat = np.empty(n_voxels, dtype=np.uint8)
         confidence_flat = np.empty(n_voxels, dtype=np.uint8)
@@ -707,7 +925,15 @@ def run_validation_inference(
         for start in range(0, n_voxels, args.predict_chunk_size):
             stop = min(start + args.predict_chunk_size, n_voxels)
             chunk_predictions = [prediction[start:stop] for prediction in flat_predictions]
-            X_chunk = one_hot_encode_predictions(chunk_predictions)
+            chunk_confidences = (
+                [confidence[start:stop] for confidence in flat_confidences]
+                if flat_confidences is not None
+                else None
+            )
+            X_chunk = one_hot_encode_predictions(
+                chunk_predictions,
+                chunk_confidences,
+            )
             predicted_chunk = classifier.predict(X_chunk).astype(np.uint8, copy=False)
             # predict_proba averages the trees' class probabilities; the
             # winning class's probability drives the confidence code.
@@ -752,6 +978,11 @@ def save_model_and_metadata(
         "model_dirs": [str(spec.model_dir) for spec in specs],
         "model_ids": [spec.model_id for spec in specs],
         "label_spaces": [spec.label_space for spec in specs],
+        "confidence_dirs": [
+            str(spec.confidence_dir) if spec.confidence_dir is not None else None
+            for spec in specs
+        ],
+        "uses_confidence": uses_confidence(specs),
         "target_annotation": args.target_annotation,
         "samples_per_class": args.samples_per_class,
         "background_samples_per_case": args.background_samples_per_case,
@@ -762,7 +993,7 @@ def save_model_and_metadata(
         "min_samples_leaf": args.min_samples_leaf,
         "max_features": args.max_features,
         "random_state": args.random_state,
-        "feature_names": FEATURE_NAMES,
+        "feature_names": feature_names(specs),
         "class_labels": [int(label) for label in classifier.classes_],
         "training_sample_counts": sample_counts,
         "discovered_training_cases": train_cases_count,
@@ -775,10 +1006,13 @@ def save_model_and_metadata(
     return metadata_path
 
 
-def print_feature_importances(classifier: RandomForestClassifier) -> None:
+def print_feature_importances(
+    classifier: RandomForestClassifier,
+    specs: list[ModelSpec],
+) -> None:
     print("Feature importances:")
     for name, importance in sorted(
-        zip(FEATURE_NAMES, classifier.feature_importances_),
+        zip(feature_names(specs), classifier.feature_importances_),
         key=lambda item: item[1],
         reverse=True,
     ):
@@ -803,10 +1037,16 @@ def main() -> None:
     print(f"Number of discovered validation cases: {len(val_cases)}")
     print("Model configuration in feature order:")
     for spec in specs:
+        confidence_description = (
+            str(resolve_path(spec.confidence_dir, args.train_prediction_root))
+            if spec.confidence_dir is not None
+            else "disabled"
+        )
         print(
             f"  {spec.model_id}: dir={resolve_path(spec.model_dir, args.train_prediction_root)} "
-            f"label_space={spec.label_space}"
+            f"label_space={spec.label_space} confidence={confidence_description}"
         )
+    print(f"Confidence features enabled: {uses_confidence(specs)}")
 
     X, y, sample_counts, usable_training_cases, skipped_training_cases = collect_training_samples(
         train_cases,
@@ -841,7 +1081,7 @@ def main() -> None:
     print(f"Model output path: {args.model_output}")
     print(f"Metadata output path: {metadata_path}")
     print(f"Validation output directory: {args.output_dir}")
-    print_feature_importances(classifier)
+    print_feature_importances(classifier, specs)
 
     run_validation_inference(
         classifier,

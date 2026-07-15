@@ -29,7 +29,7 @@ import random_forest_stacking_consensus as stacking
 
 
 DEFAULT_OUTPUT_DIR = (
-    stacking.TRAIN_VAL_ROOT / "random_forest_cross_validation"
+    stacking.ALL_CURVAS_INFERENCE_ROOT / "random_forest_cross_validation_with_confidence"
 )
 ORGAN_NAMES = {1: "pancreas", 2: "kidney", 3: "liver"}
 PATTERN_COUNT = 4 ** 3
@@ -40,6 +40,14 @@ class Fold:
     number: int
     train_ids: tuple[str, ...]
     holdout_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConfidenceFeatureCounts:
+    """Exact target counts for each observed label/confidence feature row."""
+
+    feature_keys: np.ndarray
+    target_counts: np.ndarray
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,6 +93,18 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=None,
     )
+    parser.add_argument(
+        "--confidence-dir",
+        dest="confidence_dirs",
+        type=Path,
+        nargs="+",
+        action="append",
+        default=None,
+        help=(
+            "Optional confidence directory for each model, matching --model-dir "
+            "order. Pass all three to tune the 15-feature confidence model."
+        ),
+    )
     parser.add_argument("--target-annotation", default="annotation_1.nii.gz")
     parser.add_argument("--samples-per-class", type=int, default=5000)
     parser.add_argument("--background-samples-per-case", type=int, default=10000)
@@ -92,6 +112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dilation-iterations", type=int, default=5)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-splits", type=int, default=5)
+    parser.add_argument("--predict-chunk-size", type=int, default=1_000_000)
     parser.add_argument(
         "--n-estimators-grid",
         type=int,
@@ -130,6 +151,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--n-splits must be at least 2.")
     if args.samples_per_class <= 0 or args.background_samples_per_case <= 0:
         raise ValueError("Voxel sampling limits must be positive.")
+    if args.predict_chunk_size <= 0:
+        raise ValueError("--predict-chunk-size must be positive.")
     if any(value <= 0 for value in args.n_estimators_grid):
         raise ValueError("Every n_estimators value must be positive.")
     if any(value <= 0 for value in args.min_samples_leaf_grid):
@@ -237,6 +260,176 @@ def build_case_pattern_counts(
         joint_codes,
         minlength=len(stacking.CURVAS_LABELS) * PATTERN_COUNT,
     ).reshape(len(stacking.CURVAS_LABELS), PATTERN_COUNT)
+
+
+def load_scaled_uint8_confidence_codes(
+    prediction_root: Path,
+    spec: stacking.ModelSpec,
+    case_id: str,
+    expected_shape: tuple[int, ...],
+    expected_affine: np.ndarray,
+) -> tuple[np.ndarray, Path]:
+    """Load stored confidence bytes directly to keep CV memory practical."""
+
+    if spec.confidence_dir is None:
+        raise RuntimeError(f"No confidence directory configured for {spec.model_id}.")
+    path = stacking.discover_confidence_file(
+        prediction_root,
+        spec.confidence_dir,
+        case_id,
+    )
+    if path is None:
+        confidence_root = stacking.resolve_path(spec.confidence_dir, prediction_root)
+        raise FileNotFoundError(
+            f"Missing confidence map for case {case_id} in {confidence_root}"
+        )
+
+    image = stacking.nib.load(str(path))
+    if image.shape != expected_shape:
+        raise ValueError(
+            f"Confidence shape mismatch for case {case_id}: {path} has "
+            f"{image.shape}, expected {expected_shape}."
+        )
+    if not np.allclose(image.affine, expected_affine, rtol=1e-5, atol=1e-4):
+        raise ValueError(f"Confidence affine mismatch for case {case_id}: {path}.")
+    slope = float(image.dataobj.slope)
+    intercept = float(image.dataobj.inter)
+    if image.get_data_dtype() != np.dtype(np.uint8) or not np.isclose(
+        slope,
+        1.0 / 255.0,
+        rtol=1e-5,
+        atol=1e-8,
+    ) or not np.isclose(intercept, 0.0, rtol=0.0, atol=1e-8):
+        raise ValueError(
+            f"{path} is not a scaled uint8 confidence map. Confidence CV "
+            "currently requires the default uint8 storage mode."
+        )
+    return np.asarray(image.dataobj.get_unscaled(), dtype=np.uint8), path
+
+
+def build_case_confidence_counts(
+    case_id: str,
+    case_dir: Path,
+    prediction_root: Path,
+    specs: list[stacking.ModelSpec],
+    target_annotation: str,
+) -> ConfidenceFeatureCounts:
+    """Compress exact voxel counts by observed labels and uint8 confidences.
+
+    Three 2-bit labels and three 8-bit confidences fit in one 30-bit key. This
+    preserves every observed feature row while avoiding a dense table over the
+    more than one billion theoretically possible combinations.
+    """
+
+    target, _ = stacking.load_label_image(case_dir / target_annotation)
+    unexpected = sorted(set(np.unique(target).astype(int)) - set(stacking.CURVAS_LABELS))
+    if unexpected:
+        raise ValueError(f"{case_id}: target contains unexpected labels {unexpected}.")
+
+    predictions, reference_image, _ = stacking.load_case_predictions(
+        prediction_root,
+        specs,
+        case_id,
+    )
+    if any(prediction.shape != target.shape for prediction in predictions):
+        shapes = [prediction.shape for prediction in predictions]
+        raise ValueError(
+            f"{case_id}: prediction shapes {shapes} do not match target {target.shape}."
+        )
+
+    confidence_codes = [
+        load_scaled_uint8_confidence_codes(
+            prediction_root,
+            spec,
+            case_id,
+            target.shape,
+            reference_image.affine,
+        )[0]
+        for spec in specs
+    ]
+    flat_predictions = [prediction.reshape(-1).astype(np.uint32) for prediction in predictions]
+    confidence_codes = [codes.reshape(-1).astype(np.uint32) for codes in confidence_codes]
+
+    feature_keys = (
+        flat_predictions[0]
+        | (flat_predictions[1] << 2)
+        | (flat_predictions[2] << 4)
+        | (confidence_codes[0] << 6)
+        | (confidence_codes[1] << 14)
+        | (confidence_codes[2] << 22)
+    )
+    target_flat = target.reshape(-1).astype(np.uint64)
+    joint_keys = (feature_keys.astype(np.uint64) << 2) | target_flat
+    unique_joint, joint_counts = np.unique(joint_keys, return_counts=True)
+
+    observed_feature_keys = (unique_joint >> 2).astype(np.uint32)
+    observed_targets = (unique_joint & 0b11).astype(np.intp)
+    unique_features, inverse = np.unique(observed_feature_keys, return_inverse=True)
+    target_counts = np.zeros(
+        (unique_features.size, len(stacking.CURVAS_LABELS)),
+        dtype=np.int64,
+    )
+    np.add.at(target_counts, (inverse, observed_targets), joint_counts)
+    return ConfidenceFeatureCounts(unique_features, target_counts)
+
+
+def feature_matrix_from_keys(feature_keys: np.ndarray) -> np.ndarray:
+    """Decode packed confidence-CV keys into the forest's 15 input columns."""
+
+    keys = np.asarray(feature_keys, dtype=np.uint32)
+    predictions = [
+        (keys & 0b11).astype(np.uint8),
+        ((keys >> 2) & 0b11).astype(np.uint8),
+        ((keys >> 4) & 0b11).astype(np.uint8),
+    ]
+    confidences = [
+        ((keys >> 6) & 0xFF).astype(np.float32) / 255.0,
+        ((keys >> 14) & 0xFF).astype(np.float32) / 255.0,
+        ((keys >> 22) & 0xFF).astype(np.float32) / 255.0,
+    ]
+    return stacking.one_hot_encode_predictions(predictions, confidences)
+
+
+def dice_scores_from_confidence_counts(
+    table: ConfidenceFeatureCounts,
+    classifier,
+    predict_chunk_size: int,
+) -> dict[str, float]:
+    """Calculate exact Dice by weighting every observed feature combination."""
+
+    predicted_totals = np.zeros(len(stacking.CURVAS_LABELS), dtype=np.int64)
+    true_positives = np.zeros(len(stacking.CURVAS_LABELS), dtype=np.int64)
+    gold_totals = table.target_counts.sum(axis=0)
+
+    for start in range(0, table.feature_keys.size, predict_chunk_size):
+        stop = min(start + predict_chunk_size, table.feature_keys.size)
+        features = feature_matrix_from_keys(table.feature_keys[start:stop])
+        predicted = classifier.predict(features).astype(np.intp, copy=False)
+        counts = table.target_counts[start:stop]
+        row_totals = counts.sum(axis=1)
+        predicted_totals += np.bincount(
+            predicted,
+            weights=row_totals,
+            minlength=len(stacking.CURVAS_LABELS),
+        ).astype(np.int64)
+        for label in stacking.CURVAS_LABELS:
+            selected = predicted == label
+            if np.any(selected):
+                true_positives[label] += int(counts[selected, label].sum())
+
+    scores: dict[str, float] = {}
+    organ_scores = []
+    for label, name in ORGAN_NAMES.items():
+        denominator = int(predicted_totals[label] + gold_totals[label])
+        score = (
+            2.0 * int(true_positives[label]) / denominator
+            if denominator
+            else math.nan
+        )
+        scores[f"{name}_dice"] = score
+        organ_scores.append(score)
+    scores["mean_foreground_dice"] = float(np.nanmean(organ_scores))
+    return scores
 
 
 def dice_scores_from_pattern_counts(
@@ -375,6 +568,7 @@ def main() -> None:
 
     prepare_output_dir(args.output_dir, args.overwrite)
     specs = stacking.resolve_model_specs(args)
+    use_confidence = stacking.uses_confidence(specs)
     discovered_cases = stacking.discover_case_dirs(
         args.train_cases_root,
         args.target_annotation,
@@ -383,19 +577,29 @@ def main() -> None:
         raise RuntimeError(f"No training cases found under {args.train_cases_root}.")
 
     print(f"Discovered training cases: {len(discovered_cases)}")
+    print(f"Confidence features enabled: {use_confidence}")
     print("Validating inputs and caching per-case evaluation tables...")
-    case_counts: dict[str, np.ndarray] = {}
+    case_counts: dict[str, np.ndarray | ConfidenceFeatureCounts] = {}
     excluded_cases: dict[str, str] = {}
     for case_id, case_dir in sorted(discovered_cases.items()):
         print(f"  Validating {case_id}", flush=True)
         try:
-            case_counts[case_id] = build_case_pattern_counts(
-                case_id,
-                case_dir,
-                args.train_prediction_root,
-                specs,
-                args.target_annotation,
-            )
+            if use_confidence:
+                case_counts[case_id] = build_case_confidence_counts(
+                    case_id,
+                    case_dir,
+                    args.train_prediction_root,
+                    specs,
+                    args.target_annotation,
+                )
+            else:
+                case_counts[case_id] = build_case_pattern_counts(
+                    case_id,
+                    case_dir,
+                    args.train_prediction_root,
+                    specs,
+                    args.target_annotation,
+                )
         except Exception as exc:
             if not args.skip_missing:
                 raise
@@ -429,10 +633,17 @@ def main() -> None:
         "model_dirs": [str(spec.model_dir) for spec in specs],
         "model_ids": [spec.model_id for spec in specs],
         "label_spaces": [spec.label_space for spec in specs],
+        "confidence_dirs": [
+            str(spec.confidence_dir) if spec.confidence_dir is not None else None
+            for spec in specs
+        ],
+        "uses_confidence": use_confidence,
+        "feature_names": stacking.feature_names(specs),
         "samples_per_class": args.samples_per_class,
         "background_samples_per_case": args.background_samples_per_case,
         "near_organ_background": args.near_organ_background,
         "dilation_iterations": args.dilation_iterations,
+        "predict_chunk_size": args.predict_chunk_size,
         "random_state": args.random_state,
         "primary_metric": "mean patient-level foreground Dice",
         "parameter_grid": configurations,
@@ -464,7 +675,7 @@ def main() -> None:
             f"holdout={list(fold.holdout_ids)}"
         )
 
-    all_pattern_features = pattern_feature_matrix()
+    all_pattern_features = None if use_confidence else pattern_feature_matrix()
     per_case_rows: list[dict[str, object]] = []
     summary_rows: list[dict[str, object]] = []
 
@@ -475,12 +686,30 @@ def main() -> None:
         for fold in folds:
             X, y = fold_training_data[fold.number]
             classifier = train_classifier(X, y, parameters, args.random_state)
-            predicted_labels = classifier.predict(all_pattern_features).astype(np.uint8)
+            predicted_labels = (
+                None
+                if all_pattern_features is None
+                else classifier.predict(all_pattern_features).astype(np.uint8)
+            )
             for case_id in fold.holdout_ids:
-                metrics = dice_scores_from_pattern_counts(
-                    case_counts[case_id],
-                    predicted_labels,
-                )
+                case_table = case_counts[case_id]
+                if use_confidence:
+                    if not isinstance(case_table, ConfidenceFeatureCounts):
+                        raise RuntimeError("Expected confidence feature counts.")
+                    metrics = dice_scores_from_confidence_counts(
+                        case_table,
+                        classifier,
+                        args.predict_chunk_size,
+                    )
+                else:
+                    if isinstance(case_table, ConfidenceFeatureCounts):
+                        raise RuntimeError("Expected categorical pattern counts.")
+                    if predicted_labels is None:
+                        raise RuntimeError("Missing categorical pattern predictions.")
+                    metrics = dice_scores_from_pattern_counts(
+                        case_table,
+                        predicted_labels,
+                    )
                 row = {
                     "config_id": config_id,
                     "fold": fold.number,

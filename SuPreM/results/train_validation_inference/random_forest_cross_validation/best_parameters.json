@@ -1,0 +1,11 @@
+{
+  "config_id": "config_013",
+  "parameters": {
+    "max_depth": 5,
+    "max_features": "sqrt",
+    "min_samples_leaf": 1,
+    "n_estimators": 300
+  },
+  "selection_metric": "mean patient-level foreground Dice",
+  "selection_score": 0.8349730066294759
+}

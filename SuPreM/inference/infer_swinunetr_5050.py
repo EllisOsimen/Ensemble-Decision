@@ -57,6 +57,21 @@ def parse_args():
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--confidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional 3-D map containing the softmax probability of the BTCV "
+            "label assigned at each voxel."
+        ),
+    )
+    parser.add_argument(
+        "--confidence-storage",
+        choices=("uint8", "float32"),
+        default="uint8",
+        help="Store confidence as scaled uint8 or full float32.",
+    )
+    parser.add_argument(
         "--checkpoint",
         type=Path,
         default=PROJECT_DIR
@@ -122,7 +137,7 @@ def load_model(args, device):
     return model.to(device).eval()
 
 
-def invert_prediction(batch, transforms, prediction):
+def invert_prediction(batch, transforms, prediction, nearest_interp=True):
     """Return the predicted label map to the input CT's original spatial grid."""
     item = decollate_batch(batch)[0]
     source = item["image"]
@@ -137,7 +152,7 @@ def invert_prediction(batch, transforms, prediction):
                 keys="prediction",
                 transform=transforms,
                 orig_keys="image",
-                nearest_interp=True,
+                nearest_interp=nearest_interp,
                 to_tensor=False,
             )
         ]
@@ -165,14 +180,44 @@ def save_prediction(prediction, reference, output_path):
     nib.save(output, str(output_path))
 
 
+def save_confidence(confidence, reference, output_path, storage):
+    """Save assigned-label confidence in [0, 1], optionally quantized."""
+
+    confidence = np.clip(np.asarray(confidence, dtype=np.float32), 0.0, 1.0)
+    header = reference.header.copy()
+    header["cal_min"] = 0
+    header["cal_max"] = 1
+    header["descrip"] = "Swin assigned BTCV-label confidence [0,1]"
+    if storage == "uint8":
+        stored = np.rint(confidence * 255.0).astype(np.uint8)
+        header.set_data_dtype(np.uint8)
+        output = nib.Nifti1Image(stored, reference.affine, header)
+        output.header.set_slope_inter(1.0 / 255.0, 0.0)
+    else:
+        header.set_data_dtype(np.float32)
+        output = nib.Nifti1Image(confidence, reference.affine, header)
+
+    qform, qform_code = reference.get_qform(coded=True)
+    sform, sform_code = reference.get_sform(coded=True)
+    if qform is not None:
+        output.set_qform(qform, int(qform_code))
+    if sform is not None:
+        output.set_sform(sform, int(sform_code))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(output, str(output_path))
+
+
 def main():
     args = parse_args()
     if not args.image.is_file():
         raise FileNotFoundError(f"Input CT does not exist: {args.image}")
     if not args.checkpoint.is_file():
         raise FileNotFoundError(f"Checkpoint does not exist: {args.checkpoint}")
-    if args.output.exists() and not args.overwrite:
-        print(f"Output already exists; skipping: {args.output}")
+    requested_outputs = [args.output]
+    if args.confidence_output is not None:
+        requested_outputs.append(args.confidence_output)
+    if all(path.exists() for path in requested_outputs) and not args.overwrite:
+        print(f"All requested outputs already exist; skipping: {args.output}")
         return
 
     device = torch.device(args.device)
@@ -201,9 +246,16 @@ def main():
             mode="gaussian",
         )
         # The 14 outputs are mutually exclusive BTCV classes.
-        prediction = torch.argmax(logits, dim=1, keepdim=True).to(torch.uint8).cpu()
+        probabilities = torch.softmax(logits, dim=1)
+        assigned_confidence, prediction = torch.max(
+            probabilities,
+            dim=1,
+            keepdim=True,
+        )
+        prediction = prediction.to(torch.uint8).cpu()
+        assigned_confidence = assigned_confidence.to(torch.float32).cpu()
 
-    restored = invert_prediction(batch, transforms, prediction)
+    restored = invert_prediction(batch, transforms, prediction, nearest_interp=True)
     restored = np.squeeze(restored, axis=0)
     if restored.shape != reference.shape:
         raise RuntimeError(
@@ -211,6 +263,27 @@ def main():
         )
 
     save_prediction(restored, reference, args.output)
+    if args.confidence_output is not None:
+        restored_confidence = invert_prediction(
+            batch,
+            transforms,
+            assigned_confidence,
+            nearest_interp=True,
+        )
+        restored_confidence = np.squeeze(restored_confidence, axis=0)
+        if restored_confidence.shape != reference.shape:
+            raise RuntimeError(
+                "Restored confidence shape "
+                f"{restored_confidence.shape} does not match input {reference.shape}"
+            )
+        save_confidence(
+            restored_confidence,
+            reference,
+            args.confidence_output,
+            args.confidence_storage,
+        )
+        print(f"Saved assigned-label confidence: {args.confidence_output}")
+
     print(f"Saved BTCV prediction: {args.output}")
     print(f"Labels present: {np.unique(restored).astype(int).tolist()}")
 

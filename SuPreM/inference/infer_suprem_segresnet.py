@@ -57,6 +57,21 @@ def parse_args():
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--confidence-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional 3-D map containing the sigmoid confidence of the WORD "
+            "label assigned at each voxel."
+        ),
+    )
+    parser.add_argument(
+        "--confidence-storage",
+        choices=("uint8", "float32"),
+        default="uint8",
+        help="Store confidence as scaled uint8 or full float32.",
+    )
+    parser.add_argument(
         "--checkpoint",
         type=Path,
         default=PROJECT_DIR / "pretrained_weights" / "supervised_suprem_segresnet_2100.pth",
@@ -150,11 +165,11 @@ def make_loader(image_path, spacing):
     return loader, transforms
 
 
-def invert_prediction(batch, transforms, masks):
+def invert_prediction(batch, transforms, prediction, nearest_interp=True):
     item = decollate_batch(batch)[0]
     source = item["image"]
     item["prediction"] = MetaTensor(
-        masks[0],
+        prediction[0],
         meta=deepcopy(source.meta),
         applied_operations=deepcopy(source.applied_operations),
     )
@@ -164,7 +179,7 @@ def invert_prediction(batch, transforms, masks):
                 keys="prediction",
                 transform=transforms,
                 orig_keys="image",
-                nearest_interp=True,
+                nearest_interp=nearest_interp,
                 to_tensor=False,
             )
         ]
@@ -178,6 +193,31 @@ def combine_word_labels(masks):
         class_mask = np.logical_or.reduce([masks[channel] > 0 for channel in channels])
         combined[class_mask] = word_label
     return combined
+
+
+def combine_word_labels_with_confidence(probabilities, threshold):
+    """Assign WORD labels and retain each assigned label's sigmoid score."""
+
+    masks = probabilities.ge(threshold)
+    shape = (probabilities.shape[0], 1, *probabilities.shape[2:])
+    combined = torch.zeros(shape, dtype=torch.uint8, device=probabilities.device)
+
+    supported_channels = sorted(
+        {channel for _, channels in WORD_TO_SUPREM.values() for channel in channels}
+    )
+    supported_probability = probabilities[:, supported_channels].amax(
+        dim=1,
+        keepdim=True,
+    )
+    confidence = (1.0 - supported_probability).clamp(0.0, 1.0)
+
+    for word_label, (_, channels) in WORD_TO_SUPREM.items():
+        class_probability = probabilities[:, list(channels)].amax(dim=1, keepdim=True)
+        class_mask = masks[:, list(channels)].any(dim=1, keepdim=True)
+        combined = torch.where(class_mask, word_label, combined)
+        confidence = torch.where(class_mask, class_probability, confidence)
+
+    return combined.cpu(), confidence.to(torch.float32).cpu()
 
 
 def save_prediction(prediction, reference, output_path):
@@ -199,14 +239,44 @@ def save_prediction(prediction, reference, output_path):
     nib.save(output, str(output_path))
 
 
+def save_confidence(confidence, reference, output_path, storage):
+    """Save assigned-label confidence in [0, 1], optionally quantized."""
+
+    confidence = np.clip(np.asarray(confidence, dtype=np.float32), 0.0, 1.0)
+    header = reference.header.copy()
+    header["cal_min"] = 0
+    header["cal_max"] = 1
+    header["descrip"] = "SegResNet assigned WORD-label confidence [0,1]"
+    if storage == "uint8":
+        stored = np.rint(confidence * 255.0).astype(np.uint8)
+        header.set_data_dtype(np.uint8)
+        output = nib.Nifti1Image(stored, reference.affine, header)
+        output.header.set_slope_inter(1.0 / 255.0, 0.0)
+    else:
+        header.set_data_dtype(np.float32)
+        output = nib.Nifti1Image(confidence, reference.affine, header)
+
+    qform, qform_code = reference.get_qform(coded=True)
+    sform, sform_code = reference.get_sform(coded=True)
+    if qform is not None:
+        output.set_qform(qform, int(qform_code))
+    if sform is not None:
+        output.set_sform(sform, int(sform_code))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(output, str(output_path))
+
+
 def main():
     args = parse_args()
     if not args.image.is_file():
         raise FileNotFoundError(f"Input CT does not exist: {args.image}")
     if not args.checkpoint.is_file():
         raise FileNotFoundError(f"Checkpoint does not exist: {args.checkpoint}")
-    if args.output.exists() and not args.overwrite:
-        print(f"Output already exists; skipping: {args.output}")
+    requested_outputs = [args.output]
+    if args.confidence_output is not None:
+        requested_outputs.append(args.confidence_output)
+    if all(path.exists() for path in requested_outputs) and not args.overwrite:
+        print(f"All requested outputs already exist; skipping: {args.output}")
         return
     if not 0.0 <= args.threshold <= 1.0:
         raise ValueError("--threshold must be between 0 and 1.")
@@ -238,17 +308,42 @@ def main():
             overlap=args.overlap,
             mode="gaussian",
         )
-        masks = torch.sigmoid(logits).ge(args.threshold).to(torch.uint8).cpu()
-
-    restored = invert_prediction(batch, transforms, masks)
-    if restored.shape[1:] != reference.shape:
-        raise RuntimeError(
-            f"Restored shape {restored.shape[1:]} does not match input {reference.shape}"
+        probabilities = torch.sigmoid(logits)
+        combined, assigned_confidence = combine_word_labels_with_confidence(
+            probabilities,
+            args.threshold,
         )
 
-    combined = combine_word_labels(restored)
-    save_prediction(combined, reference, args.output)
-    present = np.unique(combined).astype(int).tolist()
+    restored = invert_prediction(batch, transforms, combined, nearest_interp=True)
+    restored = np.squeeze(restored, axis=0)
+    if restored.shape != reference.shape:
+        raise RuntimeError(
+            f"Restored shape {restored.shape} does not match input {reference.shape}"
+        )
+
+    save_prediction(restored, reference, args.output)
+    if args.confidence_output is not None:
+        restored_confidence = invert_prediction(
+            batch,
+            transforms,
+            assigned_confidence,
+            nearest_interp=True,
+        )
+        restored_confidence = np.squeeze(restored_confidence, axis=0)
+        if restored_confidence.shape != reference.shape:
+            raise RuntimeError(
+                "Restored confidence shape "
+                f"{restored_confidence.shape} does not match input {reference.shape}"
+            )
+        save_confidence(
+            restored_confidence,
+            reference,
+            args.confidence_output,
+            args.confidence_storage,
+        )
+        print(f"Saved assigned-label confidence: {args.confidence_output}")
+
+    present = np.unique(restored).astype(int).tolist()
     print(f"Saved prediction: {args.output}")
     print(f"Labels present: {present}")
 
