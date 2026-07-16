@@ -1,0 +1,200 @@
+{
+  "background_samples_per_case": 10000,
+  "confidence_dirs": [
+    "clip_universal_unet_confidence",
+    "suprem_segresnet_confidence",
+    "swinunetr_5050_confidence"
+  ],
+  "dilation_iterations": 5,
+  "discovered_cases": 20,
+  "excluded_cases": {},
+  "feature_names": [
+    "clip_bg",
+    "clip_pancreas",
+    "clip_kidney",
+    "clip_liver",
+    "segresnet_bg",
+    "segresnet_pancreas",
+    "segresnet_kidney",
+    "segresnet_liver",
+    "swin_bg",
+    "swin_pancreas",
+    "swin_kidney",
+    "swin_liver",
+    "clip_confidence",
+    "segresnet_confidence",
+    "swin_confidence"
+  ],
+  "label_spaces": [
+    "suprem",
+    "suprem",
+    "btcv"
+  ],
+  "model_dirs": [
+    "clip_universal_unet",
+    "suprem_segresnet",
+    "swinunetr_5050"
+  ],
+  "model_ids": [
+    "clip_unet",
+    "segresnet",
+    "swin5050"
+  ],
+  "near_organ_background": true,
+  "output_dir": "/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/random_forest_cross_validation_with_confidence",
+  "parameter_grid": [
+    {
+      "max_depth": 5,
+      "max_features": "sqrt",
+      "min_samples_leaf": 1,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 5,
+      "max_features": "all",
+      "min_samples_leaf": 1,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 5,
+      "max_features": "sqrt",
+      "min_samples_leaf": 50,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 5,
+      "max_features": "all",
+      "min_samples_leaf": 50,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 10,
+      "max_features": "sqrt",
+      "min_samples_leaf": 1,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 10,
+      "max_features": "all",
+      "min_samples_leaf": 1,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 10,
+      "max_features": "sqrt",
+      "min_samples_leaf": 50,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 10,
+      "max_features": "all",
+      "min_samples_leaf": 50,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": null,
+      "max_features": "sqrt",
+      "min_samples_leaf": 1,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": null,
+      "max_features": "all",
+      "min_samples_leaf": 1,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": null,
+      "max_features": "sqrt",
+      "min_samples_leaf": 50,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": null,
+      "max_features": "all",
+      "min_samples_leaf": 50,
+      "n_estimators": 100
+    },
+    {
+      "max_depth": 5,
+      "max_features": "sqrt",
+      "min_samples_leaf": 1,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 5,
+      "max_features": "all",
+      "min_samples_leaf": 1,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 5,
+      "max_features": "sqrt",
+      "min_samples_leaf": 50,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 5,
+      "max_features": "all",
+      "min_samples_leaf": 50,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 10,
+      "max_features": "sqrt",
+      "min_samples_leaf": 1,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 10,
+      "max_features": "all",
+      "min_samples_leaf": 1,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 10,
+      "max_features": "sqrt",
+      "min_samples_leaf": 50,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": 10,
+      "max_features": "all",
+      "min_samples_leaf": 50,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": null,
+      "max_features": "sqrt",
+      "min_samples_leaf": 1,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": null,
+      "max_features": "all",
+      "min_samples_leaf": 1,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": null,
+      "max_features": "sqrt",
+      "min_samples_leaf": 50,
+      "n_estimators": 300
+    },
+    {
+      "max_depth": null,
+      "max_features": "all",
+      "min_samples_leaf": 50,
+      "n_estimators": 300
+    }
+  ],
+  "predict_chunk_size": 1000000,
+  "primary_metric": "mean patient-level foreground Dice",
+  "random_state": 42,
+  "samples_per_class": 5000,
+  "target_annotation": "annotation_1.nii.gz",
+  "train_cases_root": "/home/s2347484/Seg/training_set/training_set",
+  "train_prediction_root": "/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training",
+  "usable_cases": 20,
+  "uses_confidence": true
+}

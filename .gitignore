@@ -7,6 +7,10 @@
 *.out
 *.joblib
 *.sbatch
+!SuPreM/sbatch/random_forest_cross_validation.sbatch
+!SuPreM/sbatch/random_forest_stacking_consensus.sbatch
+!SuPreM/sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+!SuPreM/sbatch/audit_clip_label_overlap.sbatch
 *.log
 *.err
 *.out
@@ -16,3 +20,4 @@ WORD/
 .agents/
 3Dircadb1/
 Dataset/
+SuPreM/tmp/

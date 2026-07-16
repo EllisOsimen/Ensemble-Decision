@@ -2,6 +2,100 @@ This is a project designed for my IPAB summer internship
 
 Supervisor: Eleonora D'Arnese
 
+## Regenerate all CURVAS predictions with confidence maps
+
+The Slurm array script below runs all three segmentation models over the 20
+training, 5 validation, and 65 testing CURVAS cases. For every hard-label mask,
+it also creates a spatially aligned confidence map:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+```
+
+By default, the results are written under
+`SuPreM/results/all_curvas_inference_with_confidence` with this layout:
+
+```text
+training|validation|testing/
+├── clip_universal_unet/
+├── clip_universal_unet_confidence/
+├── suprem_segresnet/
+├── suprem_segresnet_confidence/
+├── swinunetr_5050/
+└── swinunetr_5050_confidence/
+```
+
+Every confidence-map voxel describes the confidence in the label assigned at
+the same voxel of its corresponding hard-label mask. For CLIP Universal U-Net
+and SegResNet, this is the assigned WORD label's sigmoid score; their background
+confidence is one minus the strongest supported foreground score. For Swin
+UNETR, it is the softmax score of the winning BTCV class. These are model
+confidence scores and are not guaranteed to be calibrated probabilities. The
+random-forest scripts can consume them as three separate continuous features
+when all three `--confidence-dir` arguments are supplied. Omitting those
+arguments retains the original label-only feature set.
+
+Run five-fold tuning with the prediction and confidence maps using:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch sbatch/random_forest_cross_validation.sbatch
+```
+
+The Slurm wrapper reads training inputs from
+`results/all_curvas_inference_with_confidence/training` and supplies these
+confidence directories automatically:
+
+```text
+clip_universal_unet_confidence
+suprem_segresnet_confidence
+swinunetr_5050_confidence
+```
+
+This produces 15 voxel features: 12 one-hot categorical label features plus
+one continuous confidence feature from each model. The Python scripts remain
+backwards compatible: without `--confidence-dir`, they use only the 12 label
+features.
+
+### Why the confidence maps use scaled `uint8`
+
+A confidence value lies between 0 and 1. The default output stores it as an
+unsigned 8-bit integer using
+
+```text
+stored value = round(confidence × 255)
+decoded confidence = stored value / 255
+```
+
+For example, a confidence of `0.83` is stored as
+`round(0.83 × 255) = 212`. When read back, it becomes
+`212 / 255 = 0.83137`, an absolute error of only `0.00137`.
+
+An 8-bit integer has 256 possible values (`0` through `255`), so adjacent
+decoded confidence levels are `1 / 255 = 0.00392` apart. Rounding to the nearest
+level gives a worst-case error of half that distance:
+`0.5 / 255 = 0.00196`, which is below `0.002`.
+
+The storage estimate comes from `uint8` requiring one byte per voxel while
+`float32` requires four. For example, a `512 × 512 × 900` map contains
+235,929,600 voxels, so one uncompressed confidence map uses approximately
+236 MB as `uint8`, compared with 944 MB as `float32`. Across 90 cases and three
+models (270 maps), that is approximately 64 GB for `uint8` versus 255 GB for
+`float32`. Actual `.nii.gz` sizes vary with compression and image dimensions,
+which is why 50–70 GB is a rough estimate rather than an exact total.
+
+Nibabel applies the NIfTI scale automatically, so normal loading returns values
+close to the original 0-to-1 confidence range:
+
+```python
+import nibabel as nib
+import numpy as np
+
+confidence_image = nib.load("case_confidence.nii.gz")
+confidence = np.asanyarray(confidence_image.dataobj)
+```
+
 ## Evaluate downloaded SuPreM models on WORD
 
 `SuPreM/evaluate_word.py` runs inference directly on
