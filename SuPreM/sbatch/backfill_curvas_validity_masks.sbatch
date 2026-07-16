@@ -1,35 +1,25 @@
 #!/bin/bash
-#SBATCH --job-name=curvas-infer-conf
+#SBATCH --job-name=curvas-validity
 #SBATCH --partition=Teaching
-#SBATCH --nodelist=saxa
-#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=128G
-#SBATCH --time=2-00:00:00
+#SBATCH --mem=32G
+#SBATCH --time=04:00:00
 #SBATCH --array=0-89%4
 #SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.out
 #SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.err
 
 set -euo pipefail
 
-# Regenerate all three base-model predictions, assigned-label confidence maps,
-# and binary inference-validity masks for the 20 training, 5 validation, and 65
-# testing CURVAS cases.
+# Add validity maps to an existing complete set of CURVAS hard-label and
+# confidence outputs. This uses the inference scripts' preprocessing/inversion
+# path but exits before model loading, so it needs CPU and memory but no GPU.
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch
-#
-# Run selected array tasks only (command-line --array overrides the directive):
-#   sbatch --array=7 sbatch/infer_all_curvas_three_models_with_confidence.sbatch
-#
-# Rerun CLIP and SegResNet with the current maximum-score overlap rule while
-# reusing the unchanged Swin outputs:
-#   sbatch --export=ALL,RERUN_SIGMOID=1 \
-#     sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+#   sbatch sbatch/backfill_curvas_validity_masks.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch \
+#   sbatch sbatch/backfill_curvas_validity_masks.sbatch \
 #     [OUTPUT_DIR] [TRAIN_ROOT] [VAL_ROOT] [TEST_ROOT]
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
@@ -38,16 +28,6 @@ TRAIN_ROOT="${2:-/home/s2347484/Seg/training_set/training_set}"
 VAL_ROOT="${3:-/home/s2347484/Seg/validation_set}"
 TEST_ROOT="${4:-/home/s2347484/Seg/testing_set}"
 CHECKPOINT_DIR="${PROJECT_DIR}/pretrained_weights"
-RERUN_SIGMOID="${RERUN_SIGMOID:-0}"
-
-if [[ "${RERUN_SIGMOID}" != "0" && "${RERUN_SIGMOID}" != "1" ]]; then
-    echo "RERUN_SIGMOID must be 0 or 1; got ${RERUN_SIGMOID}" >&2
-    exit 1
-fi
-
-CLIP_CHECKPOINT="${CHECKPOINT_DIR}/supervised_clip_driven_universal_unet_2100.pth"
-SEGRESNET_CHECKPOINT="${CHECKPOINT_DIR}/supervised_suprem_segresnet_2100.pth"
-SWIN5050_CHECKPOINT="${CHECKPOINT_DIR}/self_supervised_nv_swin_unetr_5050.pt"
 
 if [[ "${OUTPUT_DIR}" != /* ]]; then
     OUTPUT_DIR="${PROJECT_DIR}/${OUTPUT_DIR}"
@@ -58,17 +38,6 @@ mkdir -p "${PROJECT_DIR}/slurm_logs" "${OUTPUT_DIR}"
 for INPUT_ROOT in "${TRAIN_ROOT}" "${VAL_ROOT}" "${TEST_ROOT}"; do
     if [[ ! -d "${INPUT_ROOT}" ]]; then
         echo "Input root not found: ${INPUT_ROOT}" >&2
-        exit 1
-    fi
-done
-
-for CHECKPOINT in \
-    "${CLIP_CHECKPOINT}" \
-    "${SEGRESNET_CHECKPOINT}" \
-    "${SWIN5050_CHECKPOINT}"
-do
-    if [[ ! -f "${CHECKPOINT}" ]]; then
-        echo "Missing checkpoint: ${CHECKPOINT}" >&2
         exit 1
     fi
 done
@@ -110,7 +79,6 @@ add_cases "testing" "${TEST_ROOT}"
 CASE_COUNT="${#CASE_NAMES[@]}"
 if (( CASE_COUNT != 90 )); then
     echo "Expected 90 CURVAS cases but discovered ${CASE_COUNT}." >&2
-    echo "Update the Slurm array range if the dataset layout changed." >&2
     exit 1
 fi
 if (( SLURM_ARRAY_TASK_ID >= CASE_COUNT )); then
@@ -133,86 +101,55 @@ SWIN5050_OUTPUT="${SPLIT_OUTPUT_DIR}/swinunetr_5050/${CASE_NAME}.nii.gz"
 SWIN5050_CONFIDENCE="${SPLIT_OUTPUT_DIR}/swinunetr_5050_confidence/${CASE_NAME}.nii.gz"
 SWIN5050_VALIDITY="${SPLIT_OUTPUT_DIR}/swinunetr_5050_validity/${CASE_NAME}.nii.gz"
 
-OUTPUTS=(
-    "${CLIP_OUTPUT}"
-    "${CLIP_CONFIDENCE}"
-    "${CLIP_VALIDITY}"
-    "${SEGRESNET_OUTPUT}"
-    "${SEGRESNET_CONFIDENCE}"
-    "${SEGRESNET_VALIDITY}"
-    "${SWIN5050_OUTPUT}"
-    "${SWIN5050_CONFIDENCE}"
-    "${SWIN5050_VALIDITY}"
-)
-ALL_COMPLETE=true
-for OUTPUT in "${OUTPUTS[@]}"; do
-    if [[ ! -f "${OUTPUT}" ]]; then
-        ALL_COMPLETE=false
-        break
+for REQUIRED in \
+    "${CLIP_OUTPUT}" "${CLIP_CONFIDENCE}" \
+    "${SEGRESNET_OUTPUT}" "${SEGRESNET_CONFIDENCE}" \
+    "${SWIN5050_OUTPUT}" "${SWIN5050_CONFIDENCE}"
+do
+    if [[ ! -f "${REQUIRED}" ]]; then
+        echo "Cannot backfill ${SPLIT_NAME}/${CASE_NAME}; missing ${REQUIRED}" >&2
+        echo "Run the full GPU inference array for incomplete cases." >&2
+        exit 1
     fi
 done
-if [[ "${ALL_COMPLETE}" == true && "${RERUN_SIGMOID}" != "1" ]]; then
-    echo "All label, confidence, and validity outputs exist for ${SPLIT_NAME}/${CASE_NAME}; skipping"
-    exit 0
-fi
 
-SIGMOID_OVERWRITE_ARGS=()
-if [[ "${RERUN_SIGMOID}" == "1" ]]; then
-    SIGMOID_OVERWRITE_ARGS+=(--overwrite)
+if [[ -f "${CLIP_VALIDITY}" && -f "${SEGRESNET_VALIDITY}" && -f "${SWIN5050_VALIDITY}" ]]; then
+    echo "All validity maps already exist for ${SPLIT_NAME}/${CASE_NAME}; skipping"
+    exit 0
 fi
 
 source /opt/conda/etc/profile.d/conda.sh
 conda activate suprem-h200
 cd "${PROJECT_DIR}"
 
-python -c "import nibabel, monai, numpy, torch" || {
-    echo "The suprem-h200 environment is missing required dependencies." >&2
-    exit 1
-}
-
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-
 echo "Array job/task: ${SLURM_ARRAY_JOB_ID}/${SLURM_ARRAY_TASK_ID}"
 echo "Node: $(hostname)"
 echo "Split/case: ${SPLIT_NAME}/${CASE_NAME}"
 echo "Input image: ${INPUT_IMAGE}"
-echo "Output root: ${SPLIT_OUTPUT_DIR}"
-echo "Confidence storage: scaled uint8 (decoded range [0,1])"
-echo "Validity storage: uint8 (1=evaluated, 0=crop exterior)"
-echo "Rerun sigmoid models: ${RERUN_SIGMOID}"
-echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-not set}"
-nvidia-smi
+echo "Mode: CPU-only validity backfill; neural networks will not run"
 
 python -u inference/infer_clip_universal_unet.py \
     --image "${INPUT_IMAGE}" \
     --output "${CLIP_OUTPUT}" \
     --confidence-output "${CLIP_CONFIDENCE}" \
     --validity-output "${CLIP_VALIDITY}" \
-    --confidence-storage uint8 \
-    --checkpoint "${CLIP_CHECKPOINT}" \
-    --device cuda \
-    --sw-batch-size 1 \
-    "${SIGMOID_OVERWRITE_ARGS[@]}"
+    --checkpoint "${CHECKPOINT_DIR}/supervised_clip_driven_universal_unet_2100.pth" \
+    --device cpu
 
 python -u inference/infer_suprem_segresnet.py \
     --image "${INPUT_IMAGE}" \
     --output "${SEGRESNET_OUTPUT}" \
     --confidence-output "${SEGRESNET_CONFIDENCE}" \
     --validity-output "${SEGRESNET_VALIDITY}" \
-    --confidence-storage uint8 \
-    --checkpoint "${SEGRESNET_CHECKPOINT}" \
-    --device cuda \
-    --sw-batch-size 1 \
-    "${SIGMOID_OVERWRITE_ARGS[@]}"
+    --checkpoint "${CHECKPOINT_DIR}/supervised_suprem_segresnet_2100.pth" \
+    --device cpu
 
 python -u inference/infer_swinunetr_5050.py \
     --image "${INPUT_IMAGE}" \
     --output "${SWIN5050_OUTPUT}" \
     --confidence-output "${SWIN5050_CONFIDENCE}" \
     --validity-output "${SWIN5050_VALIDITY}" \
-    --confidence-storage uint8 \
-    --checkpoint "${SWIN5050_CHECKPOINT}" \
-    --device cuda \
-    --sw-batch-size 1
+    --checkpoint "${CHECKPOINT_DIR}/self_supervised_nv_swin_unetr_5050.pt" \
+    --device cpu
 
-echo "Completed labels, assigned-label confidence, and validity for ${SPLIT_NAME}/${CASE_NAME}"
+echo "Completed validity backfill for ${SPLIT_NAME}/${CASE_NAME}"

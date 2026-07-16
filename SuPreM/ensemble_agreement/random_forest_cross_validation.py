@@ -48,6 +48,7 @@ class ConfidenceFeatureCounts:
 
     feature_keys: np.ndarray
     target_counts: np.ndarray
+    invalid_target_counts: np.ndarray
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,6 +104,19 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Optional confidence directory for each model, matching --model-dir "
             "order. Pass all three to tune the 15-feature confidence model."
+        ),
+    )
+    parser.add_argument(
+        "--validity-dir",
+        dest="validity_dirs",
+        type=Path,
+        nargs="+",
+        action="append",
+        default=None,
+        help=(
+            "Optional binary inference-validity directory for each model. Pass "
+            "all three to exclude crop-exterior voxels from forest fitting and "
+            "assign them deterministic background during held-out scoring."
         ),
     )
     parser.add_argument("--target-annotation", default="annotation_1.nii.gz")
@@ -234,21 +248,21 @@ def build_case_pattern_counts(
 ) -> np.ndarray:
     """Count target labels for each base-model prediction combination."""
 
-    target, _ = stacking.load_label_image(case_dir / target_annotation)
-    unexpected = sorted(set(np.unique(target).astype(int)) - set(stacking.CURVAS_LABELS))
-    if unexpected:
-        raise ValueError(f"{case_id}: target contains unexpected labels {unexpected}.")
-
-    predictions, _, _ = stacking.load_case_predictions(
+    target_path = case_dir / target_annotation
+    target, target_image = stacking.load_curvas_target(target_path, case_id)
+    predictions, reference_image, prediction_paths = stacking.load_case_predictions(
         prediction_root,
         specs,
         case_id,
     )
-    if any(prediction.shape != target.shape for prediction in predictions):
-        shapes = [prediction.shape for prediction in predictions]
-        raise ValueError(
-            f"{case_id}: prediction shapes {shapes} do not match target {target.shape}."
-        )
+    stacking.validate_image_grid(
+        case_id,
+        target_image,
+        target_path,
+        reference_image,
+        prediction_paths[0],
+        role="cross-validation target",
+    )
 
     pattern_codes = (
         predictions[0].reshape(-1).astype(np.int16) * 16
@@ -290,7 +304,12 @@ def load_scaled_uint8_confidence_codes(
             f"Confidence shape mismatch for case {case_id}: {path} has "
             f"{image.shape}, expected {expected_shape}."
         )
-    if not np.allclose(image.affine, expected_affine, rtol=1e-5, atol=1e-4):
+    if not np.allclose(
+        image.affine,
+        expected_affine,
+        rtol=stacking.AFFINE_RTOL,
+        atol=stacking.AFFINE_ATOL,
+    ):
         raise ValueError(f"Confidence affine mismatch for case {case_id}: {path}.")
     slope = float(image.dataobj.slope)
     intercept = float(image.dataobj.inter)
@@ -321,21 +340,21 @@ def build_case_confidence_counts(
     more than one billion theoretically possible combinations.
     """
 
-    target, _ = stacking.load_label_image(case_dir / target_annotation)
-    unexpected = sorted(set(np.unique(target).astype(int)) - set(stacking.CURVAS_LABELS))
-    if unexpected:
-        raise ValueError(f"{case_id}: target contains unexpected labels {unexpected}.")
-
-    predictions, reference_image, _ = stacking.load_case_predictions(
+    target_path = case_dir / target_annotation
+    target, target_image = stacking.load_curvas_target(target_path, case_id)
+    predictions, reference_image, prediction_paths = stacking.load_case_predictions(
         prediction_root,
         specs,
         case_id,
     )
-    if any(prediction.shape != target.shape for prediction in predictions):
-        shapes = [prediction.shape for prediction in predictions]
-        raise ValueError(
-            f"{case_id}: prediction shapes {shapes} do not match target {target.shape}."
-        )
+    stacking.validate_image_grid(
+        case_id,
+        target_image,
+        target_path,
+        reference_image,
+        prediction_paths[0],
+        role="cross-validation target",
+    )
 
     confidence_codes = [
         load_scaled_uint8_confidence_codes(
@@ -359,6 +378,22 @@ def build_case_confidence_counts(
         | (confidence_codes[2] << 22)
     )
     target_flat = target.reshape(-1).astype(np.uint64)
+    invalid_target_counts = np.zeros(len(stacking.CURVAS_LABELS), dtype=np.int64)
+    validity_mask, _ = stacking.load_common_validity_mask(
+        prediction_root,
+        specs,
+        case_id,
+        target.shape,
+        reference_image.affine,
+    )
+    if validity_mask is not None:
+        valid_flat = validity_mask.reshape(-1)
+        invalid_target_counts = np.bincount(
+            target_flat[~valid_flat].astype(np.intp, copy=False),
+            minlength=len(stacking.CURVAS_LABELS),
+        ).astype(np.int64, copy=False)
+        feature_keys = feature_keys[valid_flat]
+        target_flat = target_flat[valid_flat]
     joint_keys = (feature_keys.astype(np.uint64) << 2) | target_flat
     unique_joint, joint_counts = np.unique(joint_keys, return_counts=True)
 
@@ -370,7 +405,11 @@ def build_case_confidence_counts(
         dtype=np.int64,
     )
     np.add.at(target_counts, (inverse, observed_targets), joint_counts)
-    return ConfidenceFeatureCounts(unique_features, target_counts)
+    return ConfidenceFeatureCounts(
+        unique_features,
+        target_counts,
+        invalid_target_counts,
+    )
 
 
 def feature_matrix_from_keys(feature_keys: np.ndarray) -> np.ndarray:
@@ -399,7 +438,10 @@ def dice_scores_from_confidence_counts(
 
     predicted_totals = np.zeros(len(stacking.CURVAS_LABELS), dtype=np.int64)
     true_positives = np.zeros(len(stacking.CURVAS_LABELS), dtype=np.int64)
-    gold_totals = table.target_counts.sum(axis=0)
+    gold_totals = table.target_counts.sum(axis=0) + table.invalid_target_counts
+    # Invalid crop-exterior voxels bypass the forest and are fixed background.
+    predicted_totals[0] = int(table.invalid_target_counts.sum())
+    true_positives[0] = int(table.invalid_target_counts[0])
 
     for start in range(0, table.feature_keys.size, predict_chunk_size):
         stop = min(start + predict_chunk_size, table.feature_keys.size)
@@ -569,6 +611,7 @@ def main() -> None:
     prepare_output_dir(args.output_dir, args.overwrite)
     specs = stacking.resolve_model_specs(args)
     use_confidence = stacking.uses_confidence(specs)
+    use_validity = stacking.uses_validity(specs)
     discovered_cases = stacking.discover_case_dirs(
         args.train_cases_root,
         args.target_annotation,
@@ -578,6 +621,7 @@ def main() -> None:
 
     print(f"Discovered training cases: {len(discovered_cases)}")
     print(f"Confidence features enabled: {use_confidence}")
+    print(f"Validity gating enabled: {use_validity}")
     print("Validating inputs and caching per-case evaluation tables...")
     case_counts: dict[str, np.ndarray | ConfidenceFeatureCounts] = {}
     excluded_cases: dict[str, str] = {}
@@ -637,7 +681,13 @@ def main() -> None:
             str(spec.confidence_dir) if spec.confidence_dir is not None else None
             for spec in specs
         ],
+        "validity_dirs": [
+            str(spec.validity_dir) if spec.validity_dir is not None else None
+            for spec in specs
+        ],
         "uses_confidence": use_confidence,
+        "uses_validity": use_validity,
+        "invalid_voxel_policy": "deterministic background; forest bypassed",
         "feature_names": stacking.feature_names(specs),
         "samples_per_class": args.samples_per_class,
         "background_samples_per_case": args.background_samples_per_case,

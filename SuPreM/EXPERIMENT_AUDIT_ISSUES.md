@@ -8,7 +8,7 @@ complete until its verification step has passed.
 
 ## Recommended resolution order
 
-1. Correct the zero-filled confidence regions.
+1. Generate and use validity masks for zero-filled confidence regions.
 2. Audit overlapping sigmoid labels for both CLIP and SegResNet.
 3. Regenerate or repair affected inputs, then rerun confidence CV.
 4. Make final random-forest training fail on invalid or missing cases.
@@ -24,7 +24,8 @@ inputs, so changing files mid-run could make the two stages use different data.
 
 ### [ ] 1. Confidence outside the preprocessing crop is zero-filled
 
-**Status:** Confirmed in generated data.
+**Status:** Code fix implemented; validity masks must still be generated for the
+existing dataset and confidence CV must be rerun.
 
 `CropForegroundd` removes exterior air before inference. When outputs are
 inverted to the original CT grid, the hard mask is correctly filled with label
@@ -55,31 +56,40 @@ not model scores.
 **Impact:** The random forest can learn a spurious `all confidences = 0`
 indicator for the exterior crop instead of learning only model confidence.
 
-**Resolution:**
+**Implemented resolution:**
 
-- Update inference to invert an explicit validity mask and assign a documented
-  confidence value outside the valid inference crop.
-- Existing maps probably do not require GPU inference. First verify across all
-  270 label/confidence pairs that every zero-confidence voxel has hard label 0.
-  Then repair only those padding voxels using the chosen exterior-background
-  convention, while preserving the scaled-uint8 header and geometry.
-- Keep the current CV result only as a diagnostic baseline.
-- Rerun confidence CV after all maps have been repaired consistently.
+- Each inference script can now save a binary validity map by inverting an
+  all-ones cropped-grid mask: 1=evaluated and 0=crop exterior.
+- If hard-label and confidence outputs already exist, the scripts reconstruct a
+  missing validity mask without loading or running the neural network.
+- RF fitting samples only common-valid voxels.
+- Final RF inference bypasses invalid voxels and assigns background directly.
+- CV bypasses invalid voxels in the same way while counting any invalid human
+  foreground as false negatives.
+
+**Remaining work:**
+
+- Generate all three validity masks for every case.
+- Run the full dataset integrity audit.
+- Keep the current confidence CV result only as a diagnostic baseline.
+- Rerun confidence CV using the validity-enabled wrapper.
 
 **Verification:**
 
-- No impossible confidence values remain inside or outside the valid crop.
-- All repaired confidence maps retain the corresponding label-map shape and
-  affine.
-- The same repair policy is recorded in the run documentation.
+- Every validity map is binary and retains the corresponding label-map shape
+  and affine.
+- The three model validity masks match exactly for each case.
+- Human foreground outside validity is reported rather than silently excluded.
+- The deterministic-background bypass policy is recorded in run metadata.
 
 ### [ ] 2. Multi-positive sigmoid labels are resolved by overwrite order
 
-**Status:** Confirmed in code; frequency in real predictions is being audited.
+**Status:** Code fixed and synthetic overlap behavior verified; existing CLIP
+and SegResNet predictions must still be regenerated.
 
 CLIP and SegResNet have independent sigmoid channels. When several grouped WORD
-labels exceed 0.5 at the same voxel, the current loops let the later WORD label
-overwrite the earlier label, regardless of which score is higher.
+labels exceed 0.5 at the same voxel, the old loops let the later WORD label
+overwrite the earlier label, regardless of which score was higher.
 
 Relevant code:
 
@@ -92,19 +102,27 @@ The saved confidence is then also changed to 0.55.
 **Impact:** Hard labels and assigned confidences can depend on dictionary order
 rather than model evidence.
 
-**Resolution:**
+**Implemented resolution:**
 
-- Complete the CLIP overlap audit.
-- Extend the same audit to SegResNet; the current audit script only covers CLIP.
-- Report both the multi-positive fraction and the fraction whose assigned label
-  differs between overwrite-order and maximum-score rules.
-- If material, select the grouped WORD label with the highest score among labels
-  above threshold and keep the matching score as confidence.
-- After changing the rule, regenerate affected predictions and confidence maps,
-  then rerun CV and final training.
+- CLIP and SegResNet now select the supported WORD label with the highest
+  sigmoid score and save that same winning score as confidence.
+- Grouped labels such as adrenal first take the maximum of their mapped model
+  channels.
+- Exact equal-score ties retain the first WORD label deterministically.
+- The implementation streams the current maximum rather than allocating a
+  second 16-channel volume.
 
-**Verification:** Overlap voxels receive the maximum-score supported WORD label,
-and the saved confidence equals that selected label's score.
+**Remaining work:**
+
+- Regenerate all affected CLIP and SegResNet predictions and confidence maps.
+- Complete the CLIP overlap audit and extend it to SegResNet to quantify how
+  many saved voxels changed.
+- Rerun confidence CV and final training after regeneration.
+
+**Verification:** Synthetic cases passed for earlier-label wins, later-label
+wins, background, the inclusive 0.5 threshold, grouped adrenal channels, and
+deterministic exact ties. Full completion still requires the regenerated real
+maps and overlap audit.
 
 ### [ ] 3. Weighted consensus uses testing-set-derived weights
 
@@ -130,9 +148,9 @@ weight and confirms that none are final testing cases.
 
 ## Random-forest implementation issues
 
-### [ ] 4. Final training silently skips invalid patients
+### [x] 4. Final training silently skips invalid patients
 
-**Status:** Confirmed in code.
+**Status:** Resolved and fail-fast behavior verified.
 
 `collect_training_samples()` in
 `ensemble_agreement/random_forest_stacking_consensus.py` catches loading errors
@@ -140,43 +158,47 @@ and shape mismatches and continues even when `--skip-missing` was not requested.
 A final run can therefore finish successfully using fewer patients than
 intended.
 
-**Resolution:** Re-raise errors by default. Skip only when `--skip-missing` is
-explicitly enabled. For the official experiment, require exactly the expected
-20 training patients and 5 validation patients.
+**Resolution:** Loading errors, shape mismatches, and empty samples now raise by
+default. They are skipped only when `--skip-missing` is explicitly enabled.
+For the official experiment, require exactly the expected 20 training patients
+and 5 validation patients.
 
-**Verification:** Temporarily remove or corrupt one input and confirm that the
-default run fails rather than fitting a model.
+**Verification:** A synthetic missing-case check confirmed that the default run
+raises `FileNotFoundError` rather than fitting a model with that case omitted.
 
-### [ ] 5. Hard-mask affine validation is incomplete
+### [x] 5. Hard-mask affine validation is incomplete
 
-**Status:** Safeguard missing, but current data passed an independent audit.
+**Status:** Resolved and deliberate affine-mismatch failure verified.
 
-`load_case_predictions()` checks hard-mask shapes but not their affines. A
+Previously, `load_case_predictions()` checked hard-mask shapes but not their affines. A
 same-shaped shifted or flipped mask could be flattened and paired voxelwise
-without detection. Confidence affines are checked only against the first hard
-prediction, and training targets are checked by shape only.
+without detection. Confidence affines were checked only against the first hard
+prediction, and training targets were checked by shape only.
 
-**Resolution:** Require shape and affine agreement among all hard predictions,
-all confidence maps, and the target annotation. Use the same tolerances as the
-evaluation code.
+**Resolution:** All hard predictions must now match the first prediction's
+shape and affine. Confidence maps, validity masks, and the target annotation
+must match that same reference grid. Affines use the evaluation tolerances
+`rtol=1e-5` and `atol=1e-5`.
 
-**Verification:** A deliberately modified affine must cause CV and final
-training to fail before sampling.
+**Verification:** A same-shaped prediction with a deliberately shifted affine
+was rejected with a case-, model-, and file-specific error before sampling.
 
-### [ ] 6. Unknown prediction labels can silently become background
+### [x] 6. Unknown prediction labels can silently become background
 
-**Status:** Confirmed in code.
+**Status:** Resolved and unexpected source/target labels were rejected in
+focused tests.
 
-`map_labels()` initializes the remapped output as background and only replaces
-known source IDs. An unexpected label such as 255 is consequently converted to
-background instead of raising an error.
+Previously, `map_labels()` initialized the remapped output as background and
+only replaced known source IDs. An unexpected label such as 255 was consequently
+converted to background instead of raising an error.
 
-**Resolution:** Validate native label values against the selected label-space
-mapping before remapping. Also validate target annotations as containing only
-CURVAS labels 0, 1, 2, and 3 in both CV and final training.
+**Resolution:** Native prediction values are validated against the complete
+configured BTCV, SuPreM/WORD, or CURVAS vocabulary before remapping. Both CV
+and final training now load targets through the same validator and allow only
+CURVAS labels 0, 1, 2, and 3.
 
-**Verification:** An unexpected source or target label must stop the run with a
-case-specific error.
+**Verification:** Native model label 255 and target label 4 both stopped the
+run with case- and file-specific errors.
 
 ### [ ] 7. Final-training hyperparameters are fixed manually
 

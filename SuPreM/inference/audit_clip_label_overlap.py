@@ -112,14 +112,14 @@ def audit_case(
                 class_positive.to(torch.int32) << (word_label - 1)
             )
 
-            # This reproduces the current later-WORD-label overwrite rule.
+            # This reproduces the legacy later-WORD-label overwrite rule.
             overwrite_label = torch.where(
                 class_positive,
                 word_label,
                 overwrite_label,
             )
 
-            # This represents the proposed maximum-score assignment rule.
+            # This reproduces the current maximum-score assignment rule.
             better = class_probability > maximum_probability
             maximum_probability = torch.where(
                 better,

@@ -74,6 +74,15 @@ def parse_args():
         help="Store confidence as scaled uint8 or full float32.",
     )
     parser.add_argument(
+        "--validity-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional binary map: 1 where neural-network scores were computed "
+            "and 0 where crop inversion restored exterior background."
+        ),
+    )
+    parser.add_argument(
         "--checkpoint",
         type=Path,
         default=PROJECT_DIR
@@ -178,38 +187,76 @@ def invert_prediction(batch, transforms, prediction, nearest_interp=True):
     return np.asarray(inverter(item)["prediction"])
 
 
-def combine_word_labels(masks):
-    """Convert 32 independent binary masks to one WORD-numbered label map."""
-    combined = np.zeros(masks.shape[1:], dtype=np.uint8)
-    for word_label, (_, channels) in WORD_TO_UNIVERSAL.items():
-        class_mask = np.logical_or.reduce([masks[channel] > 0 for channel in channels])
-        combined[class_mask] = word_label
-    return combined
+def restore_validity(batch, transforms, reference):
+    """Invert a cropped all-ones map to identify the evaluated CT region."""
+
+    image = batch["image"]
+    cropped_validity = torch.ones(
+        (image.shape[0], 1, *image.shape[2:]),
+        dtype=torch.uint8,
+    )
+    restored = invert_prediction(
+        batch,
+        transforms,
+        cropped_validity,
+        nearest_interp=True,
+    )
+    restored = np.squeeze(restored, axis=0)
+    if restored.shape != reference.shape:
+        raise RuntimeError(
+            f"Restored validity shape {restored.shape} does not match input "
+            f"{reference.shape}"
+        )
+    return restored
 
 
 def combine_word_labels_with_confidence(probabilities, threshold):
-    """Assign WORD labels and retain each assigned label's sigmoid score."""
+    """Assign the highest-scoring supported WORD label at every voxel."""
 
-    masks = probabilities.ge(threshold)
     shape = (probabilities.shape[0], 1, *probabilities.shape[2:])
-    combined = torch.zeros(shape, dtype=torch.uint8, device=probabilities.device)
-
-    supported_channels = sorted(
-        {channel for _, channels in WORD_TO_UNIVERSAL.values() for channel in channels}
+    maximum_probability = torch.zeros(
+        shape,
+        dtype=probabilities.dtype,
+        device=probabilities.device,
     )
-    supported_probability = probabilities[:, supported_channels].amax(
-        dim=1,
-        keepdim=True,
+    winning_label = torch.zeros(
+        shape,
+        dtype=torch.uint8,
+        device=probabilities.device,
     )
-    # Background means none of the supported WORD structures was assigned.
-    confidence = (1.0 - supported_probability).clamp(0.0, 1.0)
-
-    # Preserve the existing overwrite order used by combine_word_labels().
     for word_label, (_, channels) in WORD_TO_UNIVERSAL.items():
-        class_probability = probabilities[:, list(channels)].amax(dim=1, keepdim=True)
-        class_mask = masks[:, list(channels)].any(dim=1, keepdim=True)
-        combined = torch.where(class_mask, word_label, combined)
-        confidence = torch.where(class_mask, class_probability, confidence)
+        # A grouped WORD class such as adrenal uses its strongest SuPreM
+        # channel as the score for that class.
+        class_probability = probabilities[:, list(channels)].amax(
+            dim=1,
+            keepdim=True,
+        )
+        better = class_probability > maximum_probability
+        maximum_probability = torch.where(
+            better,
+            class_probability,
+            maximum_probability,
+        )
+        winning_label = torch.where(better, word_label, winning_label)
+
+    # Streaming the maximum avoids allocating a second 16-channel volume.
+    # Differing scores are independent of label order; exact ties retain the
+    # first WORD label as a deterministic tie-break.
+    foreground = maximum_probability.ge(threshold)
+    combined = torch.where(
+        foreground,
+        winning_label,
+        torch.zeros_like(winning_label),
+    )
+
+    # Foreground stores the winning label's score. If no supported WORD label
+    # reaches the threshold, background confidence is one minus the strongest
+    # supported foreground score.
+    confidence = torch.where(
+        foreground,
+        maximum_probability,
+        1.0 - maximum_probability,
+    ).clamp(0.0, 1.0)
 
     return combined.cpu(), confidence.to(torch.float32).cpu()
 
@@ -260,6 +307,27 @@ def save_confidence(confidence, reference, output_path, storage):
     nib.save(output, str(output_path))
 
 
+def save_validity(validity, reference, output_path):
+    """Save a binary map of voxels that were evaluated by the network."""
+
+    validity = (np.asarray(validity) > 0.5).astype(np.uint8)
+    header = reference.header.copy()
+    header.set_data_dtype(np.uint8)
+    header["cal_min"] = 0
+    header["cal_max"] = 1
+    header["descrip"] = "CLIP inference validity: 1=evaluated, 0=crop exterior"
+    output = nib.Nifti1Image(validity, reference.affine, header)
+
+    qform, qform_code = reference.get_qform(coded=True)
+    sform, sform_code = reference.get_sform(coded=True)
+    if qform is not None:
+        output.set_qform(qform, int(qform_code))
+    if sform is not None:
+        output.set_sform(sform, int(sform_code))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(output, str(output_path))
+
+
 def main():
     args = parse_args()
     if not args.image.is_file():
@@ -269,6 +337,8 @@ def main():
     requested_outputs = [args.output]
     if args.confidence_output is not None:
         requested_outputs.append(args.confidence_output)
+    if args.validity_output is not None:
+        requested_outputs.append(args.validity_output)
     if all(path.exists() for path in requested_outputs) and not args.overwrite:
         print(f"All requested outputs already exist; skipping: {args.output}")
         return
@@ -277,16 +347,29 @@ def main():
     if not 0.0 <= args.overlap < 1.0:
         raise ValueError("--overlap must be at least 0 and less than 1.")
 
-    device = torch.device(args.device)
-    if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but is unavailable; pass --device cpu.")
-
     reference = nib.load(str(args.image))
     if len(reference.shape) != 3:
         raise ValueError(f"Expected a 3D CT image, got shape {reference.shape}")
 
     loader, transforms = make_loader(args.image, args.spacing)
     batch = next(iter(loader))
+    other_outputs_exist = args.output.exists() and (
+        args.confidence_output is None or args.confidence_output.exists()
+    )
+    if (
+        args.validity_output is not None
+        and not args.validity_output.exists()
+        and other_outputs_exist
+        and not args.overwrite
+    ):
+        restored_validity = restore_validity(batch, transforms, reference)
+        save_validity(restored_validity, reference, args.validity_output)
+        print(f"Backfilled inference validity mask: {args.validity_output}")
+        return
+
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is unavailable; pass --device cpu.")
     image = batch["image"].to(device)
     print(f"Input: {args.image}")
     print(f"Original shape: {reference.shape}")
@@ -336,6 +419,10 @@ def main():
             args.confidence_storage,
         )
         print(f"Saved assigned-label confidence: {args.confidence_output}")
+    if args.validity_output is not None:
+        restored_validity = restore_validity(batch, transforms, reference)
+        save_validity(restored_validity, reference, args.validity_output)
+        print(f"Saved inference validity mask: {args.validity_output}")
 
     present = np.unique(restored).astype(int).tolist()
     print(f"Saved prediction: {args.output}")

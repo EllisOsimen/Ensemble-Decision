@@ -107,14 +107,17 @@ CMD=(
     --model-id swin5050
     --label-space btcv
     --confidence-dir swinunetr_5050_confidence
+    --validity-dir swinunetr_5050_validity
     --model-dir clip_universal_unet
     --model-id clip_unet
     --label-space suprem
     --confidence-dir clip_universal_unet_confidence
+    --validity-dir clip_universal_unet_validity
     --model-dir suprem_segresnet
     --model-id segresnet
     --label-space suprem
     --confidence-dir suprem_segresnet_confidence
+    --validity-dir suprem_segresnet_validity
     --target-annotation annotation_1.nii.gz
     --samples-per-class 5000
     --background-samples-per-case 10000
