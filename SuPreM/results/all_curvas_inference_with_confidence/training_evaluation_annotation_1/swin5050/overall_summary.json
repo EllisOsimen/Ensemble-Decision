@@ -1,0 +1,18 @@
+{
+  "model": "swin5050",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training/swinunetr_5050",
+  "label_space": "btcv",
+  "cases_root": "/home/s2347484/Seg/training_set/training_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 20,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.717885093913772,
+  "macro_case_nsd": 0.6206639554422162,
+  "micro_dsc": 0.9963727290658714,
+  "micro_dsc_foreground": 0.8484633024511009,
+  "macro_case_dsc_foreground": 0.6244343147046141,
+  "macro_case_nsd_foreground": 0.505751317213537,
+  "tp": 4696774912,
+  "fp": 17098496,
+  "fn": 17098496
+}

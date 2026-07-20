@@ -2,16 +2,29 @@ This is a project designed for my IPAB summer internship
 
 Supervisor: Eleonora D'Arnese
 
-## Regenerate all CURVAS predictions with confidence maps
+## Regenerate all CURVAS predictions with confidence and validity maps
 
 The Slurm array script below runs all three segmentation models over the 20
 training, 5 validation, and 65 testing CURVAS cases. For every hard-label mask,
-it also creates a spatially aligned confidence map:
+it also creates spatially aligned confidence and inference-validity maps:
 
 ```bash
 cd /home/s2347484/Seg/SuPreM
 sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch
 ```
+
+If the hard-label and confidence maps already exist, do not rerun the neural
+networks. Backfill just the validity maps on CPU with:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch sbatch/backfill_curvas_validity_masks.sbatch
+```
+
+Validity backfill does not change existing organ assignments. If CLIP or
+SegResNet outputs were generated before the maximum-score overlap rule was
+introduced, use the GPU rerun command below instead so their hard labels and
+confidence maps are updated as well.
 
 By default, the results are written under
 `SuPreM/results/all_curvas_inference_with_confidence` with this layout:
@@ -20,21 +33,56 @@ By default, the results are written under
 training|validation|testing/
 ├── clip_universal_unet/
 ├── clip_universal_unet_confidence/
+├── clip_universal_unet_validity/
 ├── suprem_segresnet/
 ├── suprem_segresnet_confidence/
+├── suprem_segresnet_validity/
 ├── swinunetr_5050/
-└── swinunetr_5050_confidence/
+├── swinunetr_5050_confidence/
+└── swinunetr_5050_validity/
 ```
 
-Every confidence-map voxel describes the confidence in the label assigned at
-the same voxel of its corresponding hard-label mask. For CLIP Universal U-Net
-and SegResNet, this is the assigned WORD label's sigmoid score; their background
+Where validity is 1, every confidence-map voxel describes confidence in the
+label assigned at the same voxel of its corresponding hard-label mask. For
+CLIP Universal U-Net and SegResNet, this is the assigned WORD label's sigmoid
+score. If multiple supported WORD labels reach the threshold, the label with
+the highest sigmoid score is assigned and that same score is saved; exact ties
+use the first WORD label as a deterministic tie-break. Their background
 confidence is one minus the strongest supported foreground score. For Swin
-UNETR, it is the softmax score of the winning BTCV class. These are model
-confidence scores and are not guaranteed to be calibrated probabilities. The
-random-forest scripts can consume them as three separate continuous features
-when all three `--confidence-dir` arguments are supplied. Omitting those
-arguments retains the original label-only feature set.
+UNETR, it is the softmax score of the winning BTCV class. Where validity is 0,
+the stored confidence remains a padding sentinel and must not be interpreted as
+a model score. These are model confidence scores and are not guaranteed to be
+calibrated probabilities. The random-forest scripts can consume them as three
+separate continuous features when all three `--confidence-dir` arguments are
+supplied. Omitting those arguments retains the original label-only feature set.
+
+After changing the sigmoid overlap rule, regenerate only the affected CLIP and
+SegResNet outputs across all 90 cases while reusing Swin outputs with:
+
+```bash
+cd /home/s2347484/Seg/SuPreM
+sbatch --export=ALL,RERUN_SIGMOID=1 \
+  sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+```
+
+Every validity map is binary and uses the original CT grid:
+
+```text
+1 = the voxel was inside the cropped region evaluated by the neural network
+0 = crop inversion restored exterior background at this voxel
+```
+
+The validity value is not an additional random-forest feature. When all three
+`--validity-dir` arguments are supplied, the scripts require the three masks to
+match. Valid voxels are used for RF training and prediction. Invalid exterior
+voxels bypass the forest and are assigned background deterministically. During
+CV, an invalid voxel containing human foreground is still counted as a false
+negative, so crop errors cannot be hidden.
+
+For existing cases that already have both their hard label and confidence map,
+the inference scripts have a fast validity-only path. If the requested validity
+map is missing, they reconstruct it from the recorded preprocessing transforms
+and exit before loading or running the neural network.
 
 Run five-fold tuning with the prediction and confidence maps using:
 
@@ -53,10 +101,25 @@ suprem_segresnet_confidence
 swinunetr_5050_confidence
 ```
 
+It also supplies the matching validity directories:
+
+```text
+clip_universal_unet_validity
+suprem_segresnet_validity
+swinunetr_5050_validity
+```
+
 This produces 15 voxel features: 12 one-hot categorical label features plus
 one continuous confidence feature from each model. The Python scripts remain
 backwards compatible: without `--confidence-dir`, they use only the 12 label
 features.
+
+Before voxel pairing, CV and final RF training strictly validate every input.
+Native model labels must belong to the configured label-space vocabulary;
+targets may contain only CURVAS labels 0–3; and all hard predictions,
+confidence maps, validity masks, and targets must share the same shape and
+affine (`rtol=1e-5`, `atol=1e-5`). Invalid cases fail by default instead of
+being silently remapped or paired by array index.
 
 ### Why the confidence maps use scaled `uint8`
 

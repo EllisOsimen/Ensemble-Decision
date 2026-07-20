@@ -38,34 +38,43 @@ SUPPORTED_CONSENSUS_MODES = {"legacy", "staple", "weighted"}
 SUPPORTED_MODEL_IDS = {"clip_unet", "segresnet", "swin5050"}
 
 
-# Model- and organ-specific weights used by weighted consensus. These values
-# are deliberately kept as data here so the fusion rule remains transparent.
+# Model- and organ-specific weights used by weighted consensus. These are the
+# mean patient-level Dice scores measured on the 20 CURVAS training cases
+# against annotation_1.nii.gz. Source:
+# results/all_curvas_inference_with_confidence/
+# training_evaluation_annotation_1/all_models_per_class_summary.csv
 DEFAULT_ORGAN_WEIGHTS = {
     1: {  # pancreas
-        "clip_unet": 0.5777872787362869,
-        "segresnet": 0.7322059132266278,
-        "swin5050": 0.30526418653608517,
+        "clip_unet": 0.5753942812828367,
+        "segresnet": 0.7267991286315798,
+        "swin5050": 0.3610917070703285,
     },
     2: {  # kidney
-        "clip_unet": 0.8394793608560476,
-        "segresnet": 0.889608556575875,
-        "swin5050": 0.5146468864781183,
+        "clip_unet": 0.8688471214018607,
+        "segresnet": 0.9216238275148656,
+        "swin5050": 0.6161870592011274,
     },
     3: {  # liver
-        "clip_unet": 0.9384518006733654,
-        "segresnet": 0.5927031959642949,
-        "swin5050": 0.91382983161436,
+        "clip_unet": 0.9327433299679087,
+        "segresnet": 0.6067872585515399,
+        "swin5050": 0.8960241778423862,
     },
 }
 DEFAULT_WEAK_THRESHOLDS = {
-    1: 0.55,  # pancreas
-    2: 0.80,  # kidney
-    3: 1.00,  # liver
+    # Conservative single-model cutoffs. Pancreas requires the strongest model
+    # (SegResNet); kidney and liver reject their least-reliable model alone. A
+    # passing weak component must still connect to a strong component.
+    1: 0.6510967049572083,  # pancreas: only SegResNet alone can be weak
+    2: 0.742517090301494,  # kidney: CLIP or SegResNet alone can be weak
+    3: 0.751405718196963,  # liver: CLIP or Swin alone can be weak
 }
 DEFAULT_STRONG_THRESHOLDS = {
-    1: 0.65,  # pancreas
-    2: 0.90,  # kidney
-    3: 1.30,  # liver
+    # Each midpoint lies between the strongest single-model vote and the
+    # weakest two-model sum, so any two agreeing models are strong while no
+    # single-model vote is strong.
+    1: 0.8316425584923725,
+    2: 1.2033290040589268,
+    3: 1.2177773831809173,
 }
 ORGAN_LABELS = (1, 2, 3)
 ORGAN_NAMES = {
@@ -161,6 +170,19 @@ def parse_args() -> argparse.Namespace:
             "Label space for one --model-dir, in the same order. Use target for "
             "already-remapped 0-3 masks, btcv for Swin/BTCV labels, and suprem "
             "for SuPreM/WORD labels. If omitted, all models are treated as target."
+        ),
+    )
+    parser.add_argument(
+        "--validity-dir",
+        dest="validity_dirs",
+        type=Path,
+        action="append",
+        default=None,
+        help=(
+            "Validity-mask directory for one --model-dir, in the same order. "
+            "Repeat exactly three times in STAPLE mode. Relative paths are "
+            "resolved under prediction_root. Masks must be binary, spatially "
+            "aligned, and identical across the three models."
         ),
     )
     parser.add_argument(
@@ -578,6 +600,42 @@ def nifti_files(directory: Path) -> dict[str, Path]:
     return files
 
 
+def resolve_staple_validity_dirs(
+    consensus_mode: str,
+    validity_dirs: list[Path] | None,
+    prediction_root: Path,
+) -> list[Path] | None:
+    """Resolve the three required model validity directories for STAPLE."""
+
+    if consensus_mode != "staple":
+        if validity_dirs is not None:
+            raise ValueError("--validity-dir is currently supported only in STAPLE mode.")
+        return None
+    if validity_dirs is None or len(validity_dirs) != 3:
+        raise ValueError(
+            "STAPLE mode requires exactly three --validity-dir values, matching "
+            "the --model-dir order."
+        )
+    return [resolve_path(path, prediction_root) for path in validity_dirs]
+
+
+def validity_files_for_cases(
+    validity_dirs: list[Path],
+    case_names: list[str],
+) -> list[dict[str, Path]]:
+    """Find the required validity mask for every selected prediction case."""
+
+    files_by_model = [nifti_files(directory) for directory in validity_dirs]
+    for directory, files in zip(validity_dirs, files_by_model):
+        missing = [case_name for case_name in case_names if case_name not in files]
+        if missing:
+            raise FileNotFoundError(
+                f"Validity directory {directory} is missing {len(missing)} selected "
+                f"case(s), e.g. {missing[:3]}"
+            )
+    return files_by_model
+
+
 def matching_cases(
     model_dirs: list[Path],
     case_name: str | None,
@@ -642,6 +700,42 @@ def load_integer_mask(path: Path):
             raise ValueError(f"{path} contains non-integer labels.")
         data = rounded
     return image, data.astype(np.int16, copy=False)
+
+
+def load_binary_validity_mask(path: Path):
+    """Load a validity mask and require exact binary values 0 and 1."""
+
+    image, data = load_integer_mask(path)
+    unexpected = sorted(set(np.unique(data).astype(int)) - {0, 1})
+    if unexpected:
+        raise ValueError(f"{path} contains non-binary validity values: {unexpected}")
+    return image, data.astype(bool, copy=False)
+
+
+def shared_validity_mask(
+    case_name: str,
+    validity_masks: list[np.ndarray],
+) -> np.ndarray:
+    """Require all model validity masks to describe the same inference region."""
+
+    if len(validity_masks) != 3:
+        raise ValueError(f"{case_name}: expected three validity masks.")
+    reference = validity_masks[0]
+    if not reference.any():
+        raise ValueError(f"{case_name}: validity mask contains no valid voxels.")
+    for model_index, validity_mask in enumerate(validity_masks[1:], start=2):
+        if validity_mask.shape != reference.shape:
+            raise ValueError(
+                f"{case_name}: validity mask {model_index} shape {validity_mask.shape} "
+                f"does not match validity mask 1 shape {reference.shape}"
+            )
+        if not np.array_equal(validity_mask, reference):
+            disagreement = int(np.count_nonzero(validity_mask != reference))
+            raise ValueError(
+                f"{case_name}: validity mask {model_index} differs from validity "
+                f"mask 1 at {disagreement} voxel(s)."
+            )
+    return reference
 
 
 def remap_lookup(prediction: np.ndarray, lookup: dict[int, int], case_name: str, model_name: str) -> np.ndarray:
@@ -1064,8 +1158,9 @@ def run_binary_staple(
     max_iter: int = 50,
     tol: float = 1e-5,
     eps: float = 1e-6,
+    validity_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Estimate one binary latent truth probability map with STAPLE EM."""
+    """Estimate one binary latent truth probability map inside valid voxels."""
 
     if binary_masks.ndim < 2:
         raise ValueError("binary_masks must have shape num_models x spatial_dims.")
@@ -1078,12 +1173,27 @@ def run_binary_staple(
     if not 0.0 < eps < 0.5:
         raise ValueError("--staple-eps must be greater than 0 and less than 0.5.")
 
-    binary_masks = binary_masks.astype(np.float64, copy=False)
     num_models = binary_masks.shape[0]
+    spatial_shape = binary_masks.shape[1:]
+    if validity_mask is None:
+        validity_mask = np.ones(spatial_shape, dtype=bool)
+    else:
+        validity_mask = np.asarray(validity_mask, dtype=bool)
+        if validity_mask.shape != spatial_shape:
+            raise ValueError(
+                f"validity_mask shape {validity_mask.shape} does not match "
+                f"binary mask spatial shape {spatial_shape}."
+            )
+    if not validity_mask.any():
+        raise ValueError("validity_mask must contain at least one valid voxel.")
+
+    # Only model-observed voxels participate in EM. In particular, restored
+    # crop padding must not be counted as unanimous true-negative predictions.
+    observations = binary_masks[:, validity_mask].astype(np.float64, copy=False)
 
     # Start with the simple foreground vote fraction, then iteratively estimate
     # each model's sensitivity/specificity and the latent truth probability.
-    p = binary_masks.mean(axis=0)
+    p = observations.mean(axis=0)
     p = np.clip(p, eps, 1.0 - eps)
 
     sensitivity = np.full(num_models, 0.99, dtype=np.float64)
@@ -1094,7 +1204,7 @@ def run_binary_staple(
 
         # M-step: estimate model quality against the current soft truth.
         for model_index in range(num_models):
-            r = binary_masks[model_index]
+            r = observations[model_index]
 
             expected_tp = np.sum(p * r)
             expected_fn = np.sum(p * (1.0 - r))
@@ -1115,7 +1225,7 @@ def run_binary_staple(
         likelihood_bg = np.full(p.shape, prior_background, dtype=np.float64)
 
         for model_index in range(num_models):
-            r = binary_masks[model_index]
+            r = observations[model_index]
 
             likelihood_fg *= np.where(r > 0.5, sensitivity[model_index], 1.0 - sensitivity[model_index])
             likelihood_bg *= np.where(r > 0.5, 1.0 - specificity[model_index], specificity[model_index])
@@ -1128,7 +1238,9 @@ def run_binary_staple(
         if change < tol:
             break
 
-    return p, sensitivity, specificity
+    probability_map = np.zeros(spatial_shape, dtype=np.float64)
+    probability_map[validity_mask] = p
+    return probability_map, sensitivity, specificity
 
 
 def staple_consensus(
@@ -1138,6 +1250,7 @@ def staple_consensus(
     max_iter: int = 50,
     tol: float = 1e-5,
     eps: float = 1e-6,
+    validity_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]]:
     """Run binary STAPLE per organ, then fuse organ probabilities to labels."""
 
@@ -1149,6 +1262,17 @@ def staple_consensus(
         raise ValueError("--staple-margin-threshold must be between 0 and 1.")
 
     output_shape = predictions[0].shape
+    if validity_mask is None:
+        validity_mask = np.ones(output_shape, dtype=bool)
+    else:
+        validity_mask = np.asarray(validity_mask, dtype=bool)
+        if validity_mask.shape != output_shape:
+            raise ValueError(
+                f"validity_mask shape {validity_mask.shape} does not match "
+                f"prediction shape {output_shape}."
+            )
+    if not validity_mask.any():
+        raise ValueError("validity_mask must contain at least one valid voxel.")
     probability_maps: dict[int, np.ndarray] = {}
 
     # Background is not estimated as its own STAPLE class. Each organ gets a
@@ -1159,7 +1283,7 @@ def staple_consensus(
             axis=0,
         )
 
-        if binary_masks.sum() == 0:
+        if binary_masks[:, validity_mask].sum() == 0:
             probability_maps[organ_label] = np.zeros(output_shape, dtype=np.float32)
             continue
 
@@ -1168,6 +1292,7 @@ def staple_consensus(
             max_iter=max_iter,
             tol=tol,
             eps=eps,
+            validity_mask=validity_mask,
         )
         probability_maps[organ_label] = p.astype(np.float32)
 
@@ -1190,9 +1315,9 @@ def staple_consensus(
     # STAPLE leaves non-accepted voxels as background by default. Confidence 4
     # records organ conflicts that crossed the probability threshold but failed
     # the margin threshold; confidence 5 is low foreground probability.
-    accepted = (best_prob >= prob_threshold) & (margin >= margin_threshold)
-    ambiguous = (best_prob >= prob_threshold) & (margin < margin_threshold)
-    low_probability = best_prob < prob_threshold
+    accepted = validity_mask & (best_prob >= prob_threshold) & (margin >= margin_threshold)
+    ambiguous = validity_mask & (best_prob >= prob_threshold) & (margin < margin_threshold)
+    low_probability = validity_mask & (best_prob < prob_threshold)
 
     confidence[ambiguous] = 4
     confidence[low_probability] = 5
@@ -1308,7 +1433,7 @@ def save_staple_probability_maps(
             probability_maps[organ_label],
             reference,
             case_probability_dir / f"{organ_name}_probability.nii.gz",
-            f"STAPLE {organ_name} probability",
+            f"STAPLE {organ_name} probability in valid inference region",
         )
 
 
@@ -1361,13 +1486,22 @@ def main() -> None:
         if args.save_staple_probabilities is not None
         else None
     )
+    validity_dirs = resolve_staple_validity_dirs(
+        args.consensus_mode,
+        args.validity_dirs,
+        args.prediction_root,
+    )
+
+    ignored_input_dirs = list(validity_dirs or [])
+    if staple_probability_dir is not None:
+        ignored_input_dirs.append(staple_probability_dir)
 
     model_dirs = discover_model_dirs(
         args.prediction_root,
         args.model_dirs,
         output_dir,
         confidence_dir,
-        [staple_probability_dir] if staple_probability_dir is not None else None,
+        ignored_input_dirs,
     )
     if args.label_spaces is None:
         label_spaces = ["target"] * len(model_dirs)
@@ -1451,8 +1585,18 @@ def main() -> None:
         )
     elif args.consensus_mode == "staple":
         print_staple_settings(args)
+        if validity_dirs is None:
+            raise RuntimeError("STAPLE validity directories were not initialized.")
+        print("  validity directories:")
+        for validity_dir in validity_dirs:
+            print(f"    {validity_dir}")
 
     files_by_model, case_names = matching_cases(model_dirs, args.case_name, args.strict)
+    validity_files_by_model = (
+        validity_files_for_cases(validity_dirs, case_names)
+        if validity_dirs is not None
+        else None
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     if confidence_dir is not None:
         confidence_dir.mkdir(parents=True, exist_ok=True)
@@ -1478,6 +1622,21 @@ def main() -> None:
             for (model_dir, label_space, (_image, data)) in zip(model_dirs, label_spaces, loaded)
         ]
         validate_spatial_grid(case_name, images, args.ignore_affine)
+
+        validity_mask = None
+        if validity_files_by_model is not None:
+            loaded_validity = [
+                load_binary_validity_mask(files[case_name])
+                for files in validity_files_by_model
+            ]
+            validity_images = [image for image, _data in loaded_validity]
+            validity_masks = [data for _image, data in loaded_validity]
+            validate_spatial_grid(
+                case_name,
+                [images[0], *validity_images],
+                args.ignore_affine,
+            )
+            validity_mask = shared_validity_mask(case_name, validity_masks)
 
         # From this point onward, only the fusion strategy changes by mode; the
         # input predictions and output writers are shared.
@@ -1527,14 +1686,17 @@ def main() -> None:
                 max_iter=args.staple_max_iter,
                 tol=args.staple_tol,
                 eps=args.staple_eps,
+                validity_mask=validity_mask,
             )
             if fallback_index is not None:
                 unresolved = confidence >= 4
                 consensus[unresolved] = predictions[fallback_index][unresolved]
+            if validity_mask is not None:
+                consensus[~validity_mask] = 0
             description = (
-                f"STAPLE consensus; clip fallback={model_dirs[fallback_index].name}"
+                f"Valid-region STAPLE; clip fallback={model_dirs[fallback_index].name}"
                 if fallback_index is not None
-                else "Per-organ binary STAPLE consensus"
+                else "Per-organ binary STAPLE in valid inference region"
             )
         save_mask(
             consensus,

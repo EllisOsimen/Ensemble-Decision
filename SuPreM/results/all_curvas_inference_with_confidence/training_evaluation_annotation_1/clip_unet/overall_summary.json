@@ -1,0 +1,18 @@
+{
+  "model": "clip_unet",
+  "prediction_dir": "/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training/clip_universal_unet",
+  "label_space": "suprem",
+  "cases_root": "/home/s2347484/Seg/training_set/training_set",
+  "annotation_name": "annotation_1.nii.gz",
+  "cases": 20,
+  "nsd_tolerance_mm": 1.0,
+  "macro_case_dsc": 0.843919994426639,
+  "macro_case_nsd": 0.6635214408081145,
+  "micro_dsc": 0.9973487156064077,
+  "micro_dsc_foreground": 0.9008041167857566,
+  "macro_case_dsc_foreground": 0.7923282442175352,
+  "macro_case_nsd_foreground": 0.5657134141240386,
+  "tp": 4701375589,
+  "fp": 12497819,
+  "fn": 12497819
+}

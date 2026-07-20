@@ -1,0 +1,5 @@
+cases_root=/home/s2347484/Seg/training_set/training_set
+annotation_name=annotation_1.nii.gz
+model=clip_unet	label_space=suprem	directory=/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training/clip_universal_unet
+model=segresnet	label_space=suprem	directory=/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training/suprem_segresnet
+model=swin5050	label_space=btcv	directory=/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/training/swinunetr_5050
