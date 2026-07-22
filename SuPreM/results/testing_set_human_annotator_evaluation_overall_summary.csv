@@ -1,0 +1,5 @@
+method,cases,nsd_tolerance_mm,mean_case_fleiss_kappa,mean_case_foreground_fleiss_kappa,cases_with_fleiss_kappa,cases_with_foreground_fleiss_kappa,excluded_cases,source_summary
+random_forest,65,1.0,0.9527411181949796,0.8009641798927644,65,65,0,all_curvas_inference_with_confidence/random_forest_config_002_final/human_annotator_evaluation/overall_summary.json
+staple,65,1.0,0.9506293136426737,0.7907921164234207,65,65,0,legacy/testing_set_human_plus_staple_agreement_mask/overall_summary.json
+weighted_consensus,65,1.0,0.9401152486747885,0.7803255213453917,65,65,0,all_curvas_inference_with_confidence/weighted_consensus_training_weights/testing/human_annotator_evaluation/overall_summary.json
+unweighted_consensus,65,1.0,0.9394508660979022,0.779565346400983,65,65,0,legacy/testing_set_human_plus_agreement_mask/overall_summary.json
