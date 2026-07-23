@@ -1,0 +1,22 @@
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Method}
+& \textbf{Foreground Fleiss' $\kappa$}
+& \textbf{Pancreas $\kappa$}
+& \textbf{Kidney $\kappa$}
+& \textbf{Liver $\kappa$}
+& \textbf{Multiclass Cohen's $\kappa$} \\
+\midrule
+Human baseline & 0.879 & 0.907 $\pm$ 0.008 & 0.961 $\pm$ 0.006 & 0.982 $\pm$ 0.004 & 0.977 $\pm$ 0.004 \\
+Unweighted & 0.790 & 0.732 $\pm$ 0.005 & 0.875 $\pm$ 0.005 & 0.931 $\pm$ 0.001 & 0.914 $\pm$ 0.000 \\
+Weighted & 0.791 & 0.741 $\pm$ 0.003 & 0.868 $\pm$ 0.005 & 0.932 $\pm$ 0.001 & 0.915 $\pm$ 0.000 \\
+STAPLE & 0.802 & 0.690 $\pm$ 0.005 & 0.896 $\pm$ 0.005 & 0.949 $\pm$ 0.001 & 0.933 $\pm$ 0.001 \\
+Random Forest & 0.812 & 0.709 $\pm$ 0.005 & 0.893 $\pm$ 0.004 & 0.957 $\pm$ 0.002 & 0.938 $\pm$ 0.001 \\
+\bottomrule
+\end{tabular}
+\caption{Agreement metrics after excluding UKCHLL082. Pairwise metrics are reported as mean $\pm$ standard deviation across the three relevant expert comparisons.}
+\label{tab:kappa_comparison_excluding_invalid_case}
+\end{table}
