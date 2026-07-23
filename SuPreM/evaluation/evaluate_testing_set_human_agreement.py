@@ -33,6 +33,12 @@ import numpy as np
 from surface_distance import metrics as surface_distance_metrics
 from tqdm import tqdm
 
+from evaluate_testing_set_prediction_dirs import (
+    ModelSpec,
+    SUPPORTED_LABEL_SPACES,
+    remap_prediction_to_target,
+)
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
@@ -51,6 +57,7 @@ class LabelSource:
 
     name: str
     path_by_case: dict[str, Path] | None = None
+    label_space: str = "target"
 
     @property
     def pair_label(self) -> str:
@@ -76,8 +83,8 @@ def nifti_stem(name: str) -> str:
     return Path(name).stem
 
 
-def parse_prediction_source(value: str) -> tuple[str | None, Path]:
-    """Parse --prediction-dir values formatted as DIR or NAME=DIR."""
+def parse_prediction_source(value: str) -> tuple[str | None, Path, str]:
+    """Parse DIR[:LABEL_SPACE] or NAME=DIR[:LABEL_SPACE]."""
 
     if "=" in value:
         name, directory_text = value.split("=", 1)
@@ -88,10 +95,17 @@ def parse_prediction_source(value: str) -> tuple[str | None, Path]:
         name = None
         directory_text = value
 
+    label_space = "target"
+    if ":" in directory_text:
+        possible_directory, possible_label_space = directory_text.rsplit(":", 1)
+        if possible_label_space in SUPPORTED_LABEL_SPACES:
+            directory_text = possible_directory
+            label_space = possible_label_space
+
     directory = Path(directory_text)
     if not directory.is_absolute():
         directory = PROJECT_DIR / directory
-    return name, directory
+    return name, directory, label_space
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,10 +136,11 @@ def parse_args() -> argparse.Namespace:
         type=parse_prediction_source,
         default=[],
         help=(
-            "Prediction directory to include as an extra rater. Use DIR or NAME=DIR. "
+            "Prediction directory to include as an extra rater. Use DIR, NAME=DIR, "
+            "or NAME=DIR:LABEL_SPACE, where LABEL_SPACE is target, suprem, or btcv. "
             "Files are matched as DIR/UKCHLL003.nii.gz, DIR/UKCHLL003.nii, or "
             "DIR/UKCHLL003/agreement_mask.nii.gz. Repeat for multiple directories. "
-            "Predictions must already use the 0-3 testing-set label space."
+            "The default label space is target (the 0-3 testing-set labels)."
         ),
     )
     parser.add_argument(
@@ -178,7 +193,11 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
         writer.writerows(rows)
 
 
-def load_integer_mask(path: Path, atol: float = 1e-3) -> tuple[nib.Nifti1Image, np.ndarray]:
+def load_integer_mask(
+    path: Path,
+    atol: float = 1e-3,
+    require_target_labels: bool = True,
+) -> tuple[nib.Nifti1Image, np.ndarray]:
     """Load a NIfTI label map and verify it uses the expected integer labels."""
 
     image = nib.load(str(path))
@@ -193,10 +212,11 @@ def load_integer_mask(path: Path, atol: float = 1e-3) -> tuple[nib.Nifti1Image, 
         data = rounded
     data = data.astype(np.int16, copy=False)
 
-    # Human annotations should already be in the testing-set 0-3 label space.
-    unknown = sorted(set(np.unique(data).astype(int)) - set(TARGET_LABELS))
-    if unknown:
-        raise ValueError(f"{path} contains unexpected label(s): {unknown}")
+    if require_target_labels:
+        # Human annotations and target-space predictions must use labels 0-3.
+        unknown = sorted(set(np.unique(data).astype(int)) - set(TARGET_LABELS))
+        if unknown:
+            raise ValueError(f"{path} contains unexpected target label(s): {unknown}")
     return image, data
 
 
@@ -512,11 +532,13 @@ def main() -> None:
     case_dirs = case_directories(args.cases_root)
     sources = [LabelSource(annotation_name) for annotation_name in args.annotations]
     prediction_source_info = []
-    for raw_name, directory in args.prediction_dirs:
+    for raw_name, directory, label_space in args.prediction_dirs:
         files = prediction_files(directory)
         name = raw_name or directory.name
-        sources.append(LabelSource(name, files))
-        prediction_source_info.append({"name": name, "directory": str(directory)})
+        sources.append(LabelSource(name, files, label_space))
+        prediction_source_info.append(
+            {"name": name, "directory": str(directory), "label_space": label_space}
+        )
     source_names = [source.name for source in sources]
     if len(source_names) != len(set(source_names)):
         raise ValueError(f"Label source names must be unique: {source_names}")
@@ -589,7 +611,14 @@ def main() -> None:
         # external directory.
         for source in sources:
             path = source.path_for_case(case_name, case_dir)
-            loaded.append((source.name, *load_integer_mask(path)))
+            image, mask = load_integer_mask(
+                path,
+                require_target_labels=(source.label_space == "target"),
+            )
+            if source.label_space != "target":
+                model = ModelSpec(source.name, path.parent, source.label_space)
+                mask = remap_prediction_to_target(mask, model, case_name)
+            loaded.append((source.name, image, mask))
 
         # Use the first annotation as the reference grid. All other annotations
         # must match this grid unless --ignore-affine is explicitly used.

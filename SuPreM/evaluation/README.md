@@ -111,6 +111,20 @@ python evaluation/evaluate_testing_set_human_agreement.py \
 
 Prediction files are matched as flat `UKCHLL003.nii.gz`/`UKCHLL003.nii` files,
 or as `UKCHLL003/agreement_mask.nii.gz` under the prediction directory.
+Predictions in native SuPreM/WORD or BTCV label spaces can be remapped during
+loading by appending `:suprem` or `:btcv` to the directory specification. If no
+suffix is supplied, predictions are assumed to already use target labels 0--3.
+
+Evaluate the three base models separately against all three experts using the
+three-task Slurm array:
+
+```bash
+sbatch sbatch/evaluate_base_models_human_annotators.sbatch
+```
+
+Each task writes a separate four-rater Fleiss summary and the three
+model--expert pairwise summaries under
+`results/base_model_human_annotator_evaluation/`.
 
 ### `check_testing_set_annotation_affines.py`
 
