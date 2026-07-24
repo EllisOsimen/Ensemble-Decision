@@ -18,9 +18,10 @@ The script produces two main versions of the confusion matrix:
         Every patient therefore contributes equally to the final result.
 """
 
+import argparse
+import gzip
 from multiprocessing import Pool
 from pathlib import Path
-import gzip
 
 import nibabel as nib
 import numpy as np
@@ -32,9 +33,51 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ROOT = REPOSITORY_ROOT / "testing_set"
 ROW_ANNOTATION = "annotation_2.nii.gz"
 COLUMN_ANNOTATION = "annotation_3.nii.gz"
+EXCLUDED_CASES = {"UKCHLL082"}
+NUMBER_OF_LABELS = 4
+CHUNK_VOXELS = 4_000_000
+WORKERS = 4
 
 
-def process_case(case_dir: Path):
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Compute a row-normalized confusion matrix between two expert "
+            "annotations across the testing set."
+        )
+    )
+    parser.add_argument(
+        "--row-annotation",
+        default=ROW_ANNOTATION,
+        help="Annotation filename used for matrix rows.",
+    )
+    parser.add_argument(
+        "--column-annotation",
+        default=COLUMN_ANNOTATION,
+        help="Annotation filename used for matrix columns.",
+    )
+    parser.add_argument(
+        "--cases-root",
+        type=Path,
+        default=ROOT,
+        help="Directory containing testing-set case folders.",
+    )
+    parser.add_argument(
+        "--exclude-case",
+        action="append",
+        default=sorted(EXCLUDED_CASES),
+        help="Case ID to exclude. Can be passed more than once.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=WORKERS,
+        help="Number of worker processes.",
+    )
+    return parser.parse_args()
+
+
+def process_case(case_dir: Path, row_annotation: str, column_annotation: str):
     """Process one patient and return raw and row-normalized confusion counts.
 
     A multiprocessing worker calls this function for one patient directory.
@@ -46,7 +89,7 @@ def process_case(case_dir: Path):
 
     # The first annotation is represented by matrix rows, while the second
     # annotation supplies the comparison labels in the columns.
-    paths = [case_dir / ROW_ANNOTATION, case_dir / COLUMN_ANNOTATION]
+    paths = [case_dir / row_annotation, case_dir / column_annotation]
     images = [nib.load(str(path)) for path in paths]
 
     # A voxel-by-voxel comparison is meaningful only when both annotations
@@ -62,7 +105,7 @@ def process_case(case_dir: Path):
     proxies = [image.dataobj for image in images]
     dtypes = [np.dtype(proxy.dtype) for proxy in proxies] # how each file stores voxel values
     remaining = int(np.prod(images[0].shape)) # total number of voxels to process
-    confusion = np.zeros((4, 4), dtype=np.int64)
+    confusion = np.zeros((NUMBER_OF_LABELS, NUMBER_OF_LABELS), dtype=np.int64)
 
     # Read the compressed NIfTI files directly. At most four million voxels
     # from each annotation are held in memory in any iteration.
@@ -71,7 +114,7 @@ def process_case(case_dir: Path):
         first_file.seek(proxies[0].offset)
         second_file.seek(proxies[1].offset)
         while remaining:
-            count = min(remaining, 4_000_000)
+            count = min(remaining, CHUNK_VOXELS)
             arrays = []
             for stream, dtype, proxy in zip((first_file, second_file), dtypes, proxies):
                 raw = stream.read(count * dtype.itemsize)
@@ -83,14 +126,19 @@ def process_case(case_dir: Path):
                 # integer segmentation labels 0, 1, 2, and 3.
                 arrays.append(np.rint(values * proxy.slope + proxy.inter).astype(np.uint8))
             first, second = arrays
-            if first.max(initial=0) > 3 or second.max(initial=0) > 3:
+            if first.max(initial=0) >= NUMBER_OF_LABELS:
+                raise RuntimeError(f"{case_dir.name}: unexpected row label")
+            if second.max(initial=0) >= NUMBER_OF_LABELS:
                 raise RuntimeError(f"{case_dir.name}: unexpected label")
 
             # Encode every label pair as (row label * 4 + column label). Bincount
             # then counts all 16 possible pairs at once. After reshaping:
             # confusion[i, j] = number of voxels labelled i by the row
             # annotation and j by the column annotation.
-            confusion += np.bincount(first * 4 + second, minlength=16).reshape(4, 4)
+            confusion += np.bincount(
+                first * NUMBER_OF_LABELS + second,
+                minlength=NUMBER_OF_LABELS**2,
+            ).reshape(NUMBER_OF_LABELS, NUMBER_OF_LABELS)
             remaining -= count
 
     # Dividing by the row totals answers: "Of all voxels that the row annotator
@@ -102,29 +150,52 @@ def process_case(case_dir: Path):
     return case_dir.name, confusion, confusion / row_totals
 
 
+def process_case_from_args(task):
+    case_dir, row_annotation, column_annotation = task
+    return process_case(case_dir, row_annotation, column_annotation)
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    excluded_cases = set(args.exclude_case)
+
     print(
-        f"COMPARISON rows={ROW_ANNOTATION} columns={COLUMN_ANNOTATION}",
+        f"COMPARISON rows={args.row_annotation} columns={args.column_annotation}",
+        flush=True,
+    )
+    print(
+        "EXCLUDED_CASES "
+        + (", ".join(sorted(excluded_cases)) if excluded_cases else "none"),
         flush=True,
     )
 
-    # Treat every directory in testing_set as one patient/case.
-    case_dirs = sorted(path for path in ROOT.iterdir() if path.is_dir())
+    # Treat every non-excluded directory in testing_set as one patient/case.
+    case_dirs = sorted(
+        path for path in args.cases_root.iterdir()
+        if path.is_dir() and path.name not in excluded_cases
+    )
     results = []
+    tasks = [
+        (case_dir, args.row_annotation, args.column_annotation)
+        for case_dir in case_dirs
+    ]
 
     # Four worker processes analyse different patients concurrently.
     # imap_unordered reports a result as soon as any worker finishes, so the
     # progress messages may not follow the alphabetical patient order.
     #result includes the patient directory name, raw confusion matrix, and normalized confusion matrix.
-    with Pool(processes=4) as pool:
-        for index, result in enumerate(pool.imap_unordered(process_case, case_dirs), start=1):
+    with Pool(processes=args.workers) as pool:
+        for index, result in enumerate(pool.imap_unordered(process_case_from_args, tasks), start=1):
             results.append(result)
             print(f"{index}/{len(case_dirs)} {result[0]}", flush=True)
 
     # Pooled result: add raw voxel counts over all patients, then normalize.
     # A patient with more voxels belonging to a class has more influence on
     # that class's row.
-    pooled = sum((result[1] for result in results), start=np.zeros((4, 4), dtype=np.int64))
+    pooled = sum(
+        (result[1] for result in results),
+        start=np.zeros((NUMBER_OF_LABELS, NUMBER_OF_LABELS), dtype=np.int64),
+    )
 
     # Mean-patient result: stack the already normalized patient matrices and
     # average them. This gives every patient equal weight, regardless of scan

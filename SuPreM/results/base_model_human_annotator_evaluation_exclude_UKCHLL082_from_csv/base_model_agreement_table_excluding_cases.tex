@@ -1,0 +1,20 @@
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Base model}
+& \textbf{Foreground Fleiss' $\kappa$}
+& \textbf{Pancreas $\kappa$}
+& \textbf{Kidney $\kappa$}
+& \textbf{Liver $\kappa$}
+& \textbf{Multiclass Cohen's $\kappa$} \\
+\midrule
+CLIP Universal U-Net & 0.779 & 0.595 $\pm$ 0.002 & 0.827 $\pm$ 0.004 & 0.938 $\pm$ 0.001 & 0.907 $\pm$ 0.000 \\
+SuPreM SegResNet & 0.514 & 0.728 $\pm$ 0.003 & 0.886 $\pm$ 0.004 & 0.625 $\pm$ 0.002 & 0.686 $\pm$ 0.001 \\
+Swin UNETR & 0.675 & 0.294 $\pm$ 0.005 & 0.502 $\pm$ 0.006 & 0.911 $\pm$ 0.001 & 0.851 $\pm$ 0.002 \\
+\bottomrule
+\end{tabular}
+\caption{Base-model agreement metrics after excluding UKCHLL082. Pairwise metrics are reported as mean $\pm$ standard deviation across the three model-expert comparisons.}
+\label{tab:base_model_kappa_comparison_excluding_invalid_case}
+\end{table}

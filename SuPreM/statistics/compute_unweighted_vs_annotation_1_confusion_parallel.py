@@ -33,6 +33,7 @@ UNWEIGHTED_ROOT = (
     / "SuPreM/results/legacy/CURVAS_INFERENCE/agreement_masks_target"
 )
 EXPERT_ANNOTATION = "annotation_3.nii.gz"
+EXCLUDED_CASES = {"UKCHLL082"}
 
 NUMBER_OF_LABELS = 4
 CHUNK_VOXELS = 4_000_000
@@ -127,6 +128,11 @@ if __name__ == "__main__":
         f"COMPARISON rows={EXPERT_ANNOTATION} columns=unweighted_consensus",
         flush=True,
     )
+    print(
+        "EXCLUDED_CASES "
+        + (", ".join(sorted(EXCLUDED_CASES)) if EXCLUDED_CASES else "none"),
+        flush=True,
+    )
 
     if not CASES_ROOT.is_dir():
         raise NotADirectoryError(f"Testing-set directory not found: {CASES_ROOT}")
@@ -135,7 +141,10 @@ if __name__ == "__main__":
             f"Unweighted prediction directory not found: {UNWEIGHTED_ROOT}"
         )
 
-    case_dirs = sorted(path for path in CASES_ROOT.iterdir() if path.is_dir())
+    case_dirs = sorted(
+        path for path in CASES_ROOT.iterdir()
+        if path.is_dir() and path.name not in EXCLUDED_CASES
+    )
     if not case_dirs:
         raise RuntimeError(f"No testing cases found in {CASES_ROOT}")
 

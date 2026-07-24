@@ -1,0 +1,37 @@
+model,metric,pair,n_cases,mean,case_sd
+CLIP Universal U-Net,multiclass_cohen_kappa,annotation_1_vs_clip_unet,64,0.9075009468315509,0.03222967023061
+CLIP Universal U-Net,multiclass_cohen_kappa,annotation_2_vs_clip_unet,64,0.9068330468845405,0.0339942038178792
+CLIP Universal U-Net,multiclass_cohen_kappa,annotation_3_vs_clip_unet,64,0.9066671500607946,0.032568025704704566
+CLIP Universal U-Net,pancreas_binary_kappa,annotation_1_vs_clip_unet,64,0.5946157031443156,0.1686711065421259
+CLIP Universal U-Net,pancreas_binary_kappa,annotation_2_vs_clip_unet,64,0.5968909364283689,0.16887634166119192
+CLIP Universal U-Net,pancreas_binary_kappa,annotation_3_vs_clip_unet,64,0.5931338784086314,0.17017973201664743
+CLIP Universal U-Net,kidney_binary_kappa,annotation_1_vs_clip_unet,64,0.8255729417296129,0.10206324275239963
+CLIP Universal U-Net,kidney_binary_kappa,annotation_2_vs_clip_unet,64,0.8225772611279362,0.12019957623121767
+CLIP Universal U-Net,kidney_binary_kappa,annotation_3_vs_clip_unet,64,0.8314150535397923,0.10400128430990119
+CLIP Universal U-Net,liver_binary_kappa,annotation_1_vs_clip_unet,64,0.9383009538315399,0.027454649694140652
+CLIP Universal U-Net,liver_binary_kappa,annotation_2_vs_clip_unet,64,0.9383308395312766,0.027141611271879394
+CLIP Universal U-Net,liver_binary_kappa,annotation_3_vs_clip_unet,64,0.9360622827748185,0.02761725125106654
+SuPreM SegResNet,multiclass_cohen_kappa,annotation_1_vs_segresnet,64,0.6878583233487859,0.11163910527160567
+SuPreM SegResNet,multiclass_cohen_kappa,annotation_2_vs_segresnet,64,0.6857857524261551,0.11174863791463858
+SuPreM SegResNet,multiclass_cohen_kappa,annotation_3_vs_segresnet,64,0.6851034483440573,0.10978230112272959
+SuPreM SegResNet,pancreas_binary_kappa,annotation_1_vs_segresnet,64,0.7312295138250531,0.12292294937369193
+SuPreM SegResNet,pancreas_binary_kappa,annotation_2_vs_segresnet,64,0.7287295748859882,0.12739903285905865
+SuPreM SegResNet,pancreas_binary_kappa,annotation_3_vs_segresnet,64,0.7250042365427216,0.1482436235992616
+SuPreM SegResNet,kidney_binary_kappa,annotation_1_vs_segresnet,64,0.8887607527823772,0.0836996769832167
+SuPreM SegResNet,kidney_binary_kappa,annotation_2_vs_segresnet,64,0.8814242198550234,0.1028301553888355
+SuPreM SegResNet,kidney_binary_kappa,annotation_3_vs_segresnet,64,0.8892497435296122,0.08484425118529676
+SuPreM SegResNet,liver_binary_kappa,annotation_1_vs_segresnet,64,0.6274275704462696,0.147753390463458
+SuPreM SegResNet,liver_binary_kappa,annotation_2_vs_segresnet,64,0.625932057933103,0.14791037544338365
+SuPreM SegResNet,liver_binary_kappa,annotation_3_vs_segresnet,64,0.6229927381680616,0.14594092516524734
+Swin UNETR,multiclass_cohen_kappa,annotation_1_vs_swin5050,64,0.8531844922235401,0.09335574842074289
+Swin UNETR,multiclass_cohen_kappa,annotation_2_vs_swin5050,64,0.8504862359809661,0.09332791256793495
+Swin UNETR,multiclass_cohen_kappa,annotation_3_vs_swin5050,64,0.8498343330630623,0.09253150570115366
+Swin UNETR,pancreas_binary_kappa,annotation_1_vs_swin5050,64,0.29968045115501607,0.18082383610980338
+Swin UNETR,pancreas_binary_kappa,annotation_2_vs_swin5050,64,0.29121963350614255,0.17984554895886298
+Swin UNETR,pancreas_binary_kappa,annotation_3_vs_swin5050,64,0.29167566230679287,0.185658528894493
+Swin UNETR,kidney_binary_kappa,annotation_1_vs_swin5050,64,0.5081194303496298,0.28109984257544757
+Swin UNETR,kidney_binary_kappa,annotation_2_vs_swin5050,64,0.4965337970572991,0.28641893189881157
+Swin UNETR,kidney_binary_kappa,annotation_3_vs_swin5050,64,0.4998838302774981,0.2799264347100975
+Swin UNETR,liver_binary_kappa,annotation_1_vs_swin5050,64,0.9120065060195514,0.09164378661422846
+Swin UNETR,liver_binary_kappa,annotation_2_vs_swin5050,64,0.9119603206873347,0.09191385026110725
+Swin UNETR,liver_binary_kappa,annotation_3_vs_swin5050,64,0.9104130027307787,0.09103110568896493
