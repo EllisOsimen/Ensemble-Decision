@@ -10,6 +10,18 @@ the 64-case sensitivity summaries reported in `SuPreM/results/`.
 both the method and base-model tables under `results/results_64_testing_set/`.
 It does not rerun inference.
 
+For each configured human, consensus-method, and base-model evaluation, it
+reads exactly these files:
+
+- `per_case_fleiss_kappa.csv`
+- `per_case_pair_multiclass.csv`
+- `per_case_pair_per_class.csv`
+
+Rows whose `case` value is `UKCHLL082` are removed before all summary metrics
+are recalculated, leaving 64 cases. Existing aggregate files such as
+`overall_summary.json` and `per_pair_*_summary.csv` are deliberately not used,
+because they already contain values calculated from all 65 cases.
+
 From the repository root, run:
 
 ```bash
@@ -17,7 +29,37 @@ python SuPreM/statistics/summarize_agreement_excluding_cases.py
 ```
 
 Use `--group methods` or `--group base-models` to generate only one table set.
-Repeat `--exclude-case` when additional cases must be excluded.
+An additional exclusion is added to the default `UKCHLL082` exclusion as
+follows:
+
+```bash
+python SuPreM/statistics/summarize_agreement_excluding_cases.py \
+  --exclude-case UKCHLL007
+```
+
+The default command prints output similar to:
+
+```text
+Input: .../SuPreM/results/results_65_testing_set
+Excluded cases: UKCHLL082
+Method summary:
+  .../testing_set_agreement_summary_exclude_UKCHLL082_from_csv/agreement_table_excluding_cases.csv
+  .../testing_set_agreement_summary_exclude_UKCHLL082_from_csv/pair_level_details_excluding_cases.csv
+  .../testing_set_agreement_summary_exclude_UKCHLL082_from_csv/agreement_table_excluding_cases.tex
+Base model summary:
+  .../base_model_human_annotator_evaluation_exclude_UKCHLL082_from_csv/base_model_agreement_table_excluding_cases.csv
+  .../base_model_human_annotator_evaluation_exclude_UKCHLL082_from_csv/base_model_pair_level_details_excluding_cases.csv
+  .../base_model_human_annotator_evaluation_exclude_UKCHLL082_from_csv/base_model_agreement_table_excluding_cases.tex
+```
+
+The main method CSV contains one row per human baseline or consensus method.
+For example, its first columns are:
+
+```text
+method,cases,excluded_cases,...
+Human baseline,64,UKCHLL082,...
+Unweighted,64,UKCHLL082,...
+```
 
 ## Confusion matrices
 
