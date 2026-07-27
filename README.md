@@ -20,9 +20,9 @@ class. The normalized surface Dice tolerance used by the evaluator was 1 mm.
 | Method | Technique | What it checks | Mean case Fleiss' kappa | Mean foreground Fleiss' kappa |
 | --- | --- | --- | ---: | ---: |
 | **Unweighted consensus** | The non-learned baseline. It applies the legacy three-model agreement rule: preserve unanimous and two-model organ votes, treat two background votes conservatively, and resolve fully discordant voxels using local support or the CLIP U-Net fallback. | Whether simple model agreement alone can improve robustness, without using training-derived reliability or labels. | 0.9395 | 0.7796 |
-| **Weighted consensus** | An organ-aware deterministic fusion. Each model's pancreas, kidney, and liver vote is weighted by its mean patient-level Dice on the 20 training cases against `annotation_1.nii.gz`. Conservative weak/strong thresholds reject unreliable isolated votes while retaining connected evidence and all two-model agreements. | Whether known, organ-specific differences in model reliability improve over the unweighted baseline without fitting a voxel-level classifier. | 0.9401 | 0.7803 |
-| **STAPLE** | Per-organ binary STAPLE fusion. The EM procedure estimates each base segmenter's sensitivity/specificity and combines their masks into posterior probabilities before resolving the multi-organ label. | Whether an established probabilistic label-fusion method provides a better consensus than the hand-designed unweighted rule. | 0.9506 | 0.7908 |
-| **Random-forest stacking** | A supervised, voxel-wise meta-classifier fitted on the 20 training patients. It receives 12 one-hot base-label features plus the three assigned-label confidence values; identical validity masks prevent crop-exterior voxels from being learned as foreground. The final `config_002` uses 100 trees, maximum depth 5, all features per split, and `random_state=42`. | Whether training labels and calibrated model evidence can learn complementary error patterns that deterministic fusion misses. Testing annotations are not used to train or infer the masks. | **0.9527** | **0.8010** |
+| **Weighted consensus** | An organ-aware deterministic fusion. Each model's pancreas, kidney, and liver vote is weighted by its mean patient-level Dice on the 20 training cases against `annotation_1.nii.gz`. Weak/strong thresholds reject unreliable isolated votes while retaining connected evidence and all two-model agreements. | Whether known, organ-specific differences in model reliability improve over the unweighted baseline without needing a voxel-level classifier. | 0.9401 | 0.7803 |
+| **STAPLE** | Per-organ binary STAPLE fusion. The procedure estimates each base segmenter's sensitivity/specificity and combines their masks into posterior probabilities before resolving the multi-organ label. | Whether an established probabilistic label-fusion method provides a better consensus than the hand-designed unweighted rule. | 0.9506 | 0.7908 |
+| **Random-forest stacking** | A supervised, voxel-wise classifier fitted on the 20 training patients. It receives 12 one-hot base-label features plus the three assigned-label confidence values; identical validity masks prevent crop-exterior voxels from being learned as foreground. The final `config_002` uses 100 trees, maximum depth 5, all features per split, and `random_state=42`. | Whether training labels and calibrated model evidence can learn complementary error patterns that deterministic fusion misses. Testing annotations are not used to train or infer the masks. | **0.9527** | **0.8010** |
 
 These values are recorded in
 [`SuPreM/results/testing_set_human_annotator_evaluation_overall_summary.csv`](SuPreM/results/testing_set_human_annotator_evaluation_overall_summary.csv).
@@ -32,12 +32,12 @@ single-reference segmentation score.
 
 ## Required Repository Layout
 
-Keep the repository root as `Seg`. The inference and Slurm scripts use this
+The inference and Slurm scripts use this
 layout by default; alternative locations can be supplied as positional
 arguments to the relevant `.sbatch` scripts.
 
 ```text
-Seg/
+Ensemble-Decision/
 ├── SuPreM/
 │   ├── ensemble_agreement/             # fusion, stacking, and agreement code
 │   ├── evaluation/                     # human-annotator agreement evaluator
@@ -108,7 +108,7 @@ an equivalent environment with the dependencies below, then adapt the conda
 environment name and Slurm resource directives if your cluster differs.
 
 ```bash
-cd /path/to/Seg/SuPreM
+cd /path/to/Ensemble-Decision/SuPreM
 pip install -r requirements.txt
 ```
 
@@ -116,7 +116,7 @@ pip install -r requirements.txt
   CURVAS cases:
 
   ```bash
-  cd /path/to/Seg/SuPreM
+  cd /path/to/Ensemble-Decision/SuPreM
   sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch
   ```
 
