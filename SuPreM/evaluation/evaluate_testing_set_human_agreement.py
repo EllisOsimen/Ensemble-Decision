@@ -394,12 +394,12 @@ def multiclass_pair_metrics(first: np.ndarray, second: np.ndarray) -> dict[str, 
     foreground_union = np.logical_or(first != 0, second != 0)
     if foreground_union.any():
         foreground_exact = float((first[foreground_union] == second[foreground_union]).mean())
-        # Background is retained as a category inside the foreground union so
-        # organ-versus-background disagreements contribute to kappa. Slicing
-        # confusion[1:, 1:] would incorrectly discard those errors.
-        foreground_confusion = pair_confusion(
-            first[foreground_union], second[foreground_union]
-        )
+        # Preserve the original project definition: foreground multiclass
+        # kappa uses the 3x3 organ-only contingency table. Voxels where either
+        # rater selected background do not contribute to this specific kappa;
+        # those disagreements remain visible in foreground exact agreement and
+        # the per-organ metrics.
+        foreground_confusion = confusion[1:, 1:]
         foreground_kappa = cohen_kappa_from_counts(foreground_confusion)
     else:
         foreground_exact = math.nan

@@ -138,9 +138,10 @@ human-only run look like:
 }
 ```
 
-Metric implementation version 2 retains organ-versus-background disagreements
-in foreground multiclass kappa and prevents integer overflow in pooled micro
-kappa. Older outputs should be regenerated before those two fields are used.
+Metric implementation version 2 preserves the project's original organ-only
+definition of foreground multiclass kappa and prevents integer overflow in
+pooled micro kappa. The FP/FN columns use rater A as the reference and rater B
+as the comparison.
 
 ## Batch evaluation
 
