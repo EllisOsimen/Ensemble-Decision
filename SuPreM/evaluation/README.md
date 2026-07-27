@@ -1,60 +1,23 @@
-# Evaluation Scripts Overview
+# Evaluation
 
-The evaluation scripts measure how well saved predictions, freshly generated
-predictions, or human annotations agree with a reference.
+The main evaluation workflow compares the three testing-set expert annotations
+with each other and, optionally, with a model or consensus prediction.
 
-The general pattern is:
+## Testing-set human agreement
 
-```text
-parse evaluation inputs
-find matching cases/predictions/labels
-load NIfTI masks
-validate shape/affine alignment
-normalize label spaces
-compute per-case/per-class metrics
-aggregate summaries
-write CSV/JSON outputs
-```
+Use `evaluate_testing_set_human_agreement.py` for the human baseline and the
+main method-performance comparisons.
 
-## Main Scripts
-
-### `evaluate_word.py`
-
-Runs SuPreM inference and evaluates it on WORD in the same script.
-
-This script:
+Each case directory must contain:
 
 ```text
-loads a SuPreM checkpoint
-runs inference on WORD imagesTr
-compares predictions to WORD labelsTr
-writes Dice/NSD summaries
-optionally saves combined predictions
+testing_set/UKCHLL003/
+├── annotation_1.nii.gz
+├── annotation_2.nii.gz
+└── annotation_3.nii.gz
 ```
 
-It supports:
-
-```text
-unet
-swinunetr
-segresnet
-```
-
-This is different from the prediction-directory evaluators because it does not
-start from already-saved predictions. It creates predictions during the run.
-
-### `evaluate_word_prediction_dirs.py`
-
-Evaluates already-saved WORD prediction directories against WORD labels.
-
-Use this when inference has already been run and predictions are stored as
-NIfTI label maps.
-
-### `evaluate_testing_set_prediction_dirs.py`
-
-Evaluates prediction directories against the testing set annotations.
-
-Target label space:
+All masks are compared in the following target label space:
 
 ```text
 0 background
@@ -63,429 +26,145 @@ Target label space:
 3 liver
 ```
 
-Predictions can be interpreted as:
+### Human baseline
 
-```text
-target  already in 0-3 testing-set labels
-btcv    native BTCV labels, remapped to 0-3
-suprem  WORD/SuPreM labels, remapped to 0-3
-```
-
-### `evaluate_3d_dataset_prediction_dirs.py`
-
-Evaluates prediction directories against the 3D dataset labels.
-
-It evaluates only labels supported by all three model output spaces:
-
-```text
-1 liver
-2 spleen
-3 left kidney
-4 right kidney
-```
-
-Other 3D dataset labels are ignored because not all models predict them.
-
-### `evaluate_testing_set_human_agreement.py`
-
-Measures human-human agreement between testing-set annotations:
-
-```text
-annotation_1 vs annotation_2
-annotation_1 vs annotation_3
-annotation_2 vs annotation_3
-all three annotations together
-```
-
-It can also include one or more prediction directories as extra raters without
-copying those predictions into `testing_set`. Prediction masks must already be
-in the testing-set label space:
+From the repository root, run:
 
 ```bash
-python evaluation/evaluate_testing_set_human_agreement.py \
-  --cases-root /home/s2347484/Seg/testing_set \
-  --prediction-dir weighted=results/CURVAS_INFERENCE/agreement_masks_weighted_65case \
-  --output-dir results/testing_set_human_plus_weighted \
-  --skip-nsd
+python SuPreM/evaluation/evaluate_testing_set_human_agreement.py
 ```
 
-Prediction files are matched as flat `UKCHLL003.nii.gz`/`UKCHLL003.nii` files,
-or as `UKCHLL003/agreement_mask.nii.gz` under the prediction directory.
-Predictions in native SuPreM/WORD or BTCV label spaces can be remapped during
-loading by appending `:suprem` or `:btcv` to the directory specification. If no
-suffix is supplied, predictions are assumed to already use target labels 0--3.
+This evaluates all three expert pairs and all three experts together across the
+65 testing cases. The default output directory is:
 
-Evaluate the three base models separately against all three experts using the
-three-task Slurm array:
+```text
+SuPreM/results/results_65_testing_set/human_annotator_evaluation/
+```
+
+### Comparing a method with the experts
+
+Add a prediction directory as another rater:
 
 ```bash
-sbatch sbatch/evaluate_base_models_human_annotators.sbatch
+python SuPreM/evaluation/evaluate_testing_set_human_agreement.py \
+  --prediction-dir weighted=results/all_datasets_curvas_inference_with_confidence/weighted_consensus_training_masks/testing/consensus_masks \
+  --output-dir SuPreM/results/results_65_testing_set/weighted_human_annotator_evaluation
 ```
 
-Each task writes a separate four-rater Fleiss summary and the three
-model--expert pairwise summaries under
-`results/base_model_human_annotator_evaluation/`.
-
-### `check_testing_set_annotation_affines.py`
-
-Diagnostic script for checking annotation geometry.
-
-It reports whether annotations have matching:
+Relative prediction paths are resolved from `SuPreM/`. Prediction masks may be
+stored as either:
 
 ```text
-shape
-voxel spacing
-affine matrix
+<prediction-dir>/UKCHLL003.nii.gz
+<prediction-dir>/UKCHLL003/agreement_mask.nii.gz
 ```
 
-This is useful for cases like `UKCHLL007`, where one annotation had labels but
-was placed far away in physical space because its NIfTI header was wrong.
-
-## `evaluate_word.py` Walkthrough
-
-`evaluate_word.py` is a complete inference-and-evaluation pipeline.
-
-### `WORD_TO_SUPREM`
-
-Maps each WORD label to one or more SuPreM output channels.
-
-Example:
-
-```python
-8: ("pancreas", (10,))
-12: ("adrenal", (11, 12))
-```
-
-This means:
+Predictions are assumed to use target labels 0--3. Append `:suprem` or `:btcv`
+to the prediction specification when native model labels must be remapped:
 
 ```text
-WORD pancreas label 8 = SuPreM channel 10
-WORD adrenal label 12 = SuPreM channels 11 or 12
+--prediction-dir clip_unet=path/to/predictions:suprem
+--prediction-dir swin_unetr=path/to/predictions:btcv
 ```
 
-### `parse_args()`
+Missing predictions stop the run by default, ensuring that methods are not
+silently compared using different case subsets. Use
+`--allow-missing-predictions` only when a common-case analysis is intentional.
 
-Reads options such as:
+### Excluding cases
+
+To evaluate directly without the incomplete case `UKCHLL082`, add:
 
 ```text
---word-root
---checkpoint
---backbone
---output-dir
---device
---roi-size
---spacing
---threshold
---save-predictions
+--exclude-case UKCHLL082
 ```
 
-### `load_model(args, device)`
+The main 64-case tables in this repository are instead recalculated from the
+65-case per-case CSVs. That workflow is documented in
+`SuPreM/statistics/README.md`.
 
-Builds the selected architecture and loads the checkpoint.
+## Main metrics
 
-For `segresnet`, it builds MONAI `SegResNet`.
+- **Fleiss' kappa:** agreement across all requested raters. A prediction is
+  included as an additional rater when supplied.
+- **Multiclass Cohen's kappa:** whole-label-map agreement for each rater pair.
+- **Binary Cohen's kappa:** one-versus-rest agreement for each organ and rater
+  pair.
+- **Dice:** spatial overlap for each organ and rater pair.
+- **NSD:** boundary agreement within the requested tolerance, 1 mm by default.
 
-For `unet` and `swinunetr`, it builds `Universal_model`.
+Both full-volume and foreground-focused agreement are reported because the
+large amount of shared background can make full-volume scores appear very
+high.
 
-Then it moves the model to the selected device and switches it to evaluation
-mode:
+## Outputs
 
-```python
-model.to(device).eval()
-```
-
-### `make_loader(args)`
-
-Finds matching WORD cases:
+Each run writes:
 
 ```text
-WORD/imagesTr/*.nii.gz
-WORD/labelsTr/*.nii.gz
-```
-
-It preprocesses only the CT image:
-
-```text
-Load image
-Ensure channel-first
-Orient to RAS
-Resample to 1.5 mm spacing
-Normalize CT intensity
-Crop foreground/body region
-```
-
-The gold label is left untouched. The prediction is later inverted back to the
-original label grid.
-
-### `sliding_window_inference(...)`
-
-Runs inference over overlapping 3D patches.
-
-This keeps GPU memory use manageable and returns full-volume logits.
-
-### Logits to Masks
-
-SuPreM outputs 32 independent foreground-structure logits.
-
-The script converts them to binary masks with:
-
-```python
-masks = torch.sigmoid(logits).ge(args.threshold)
-```
-
-This is not an argmax. Multiple channels can be positive at the same voxel.
-
-### `invert_prediction(batch, transforms, prediction)`
-
-Undo preprocessing so the prediction returns to the original WORD image grid.
-
-It reverses:
-
-```text
-crop
-spacing
-orientation
-```
-
-This is needed because the model predicts in preprocessed space, while metrics
-must be computed against the original `labelsTr` mask.
-
-### `binary_metrics(prediction, gold, spacing, tolerance_mm)`
-
-Compares one predicted class mask to one gold WORD class mask.
-
-It computes:
-
-```text
-Dice / DSC
-NSD
-TP
-FP
-FN
-```
-
-NSD uses physical voxel spacing from the NIfTI header. If either mask is empty,
-NSD is recorded as `NaN` because there is no surface to compare.
-
-### Optional Saved Predictions
-
-If `--save-predictions` is passed, the script saves one combined WORD-style
-label map per case.
-
-These saved predictions are mainly for visual inspection. The metrics are
-computed from the independent SuPreM masks because a single integer label map
-cannot preserve overlapping channels.
-
-## Label-Space Mapping
-
-Different models and datasets use different label spaces, so the evaluators
-normalize predictions before computing metrics.
-
-For testing-set evaluation:
-
-```text
-BTCV pancreas          -> target pancreas
-BTCV left/right kidney -> target kidney
-BTCV liver             -> target liver
-other BTCV labels      -> background
-
-WORD liver             -> target liver
-WORD left/right kidney -> target kidney
-WORD pancreas          -> target pancreas
-other WORD labels      -> background
-```
-
-For 3D dataset evaluation:
-
-```text
-BTCV spleen       -> dataset spleen
-BTCV right kidney -> dataset right kidney
-BTCV left kidney  -> dataset left kidney
-BTCV liver        -> dataset liver
-
-WORD liver        -> dataset liver
-WORD spleen       -> dataset spleen
-WORD left kidney  -> dataset left kidney
-WORD right kidney -> dataset right kidney
-```
-
-## Common Metric Meaning
-
-### Dice / DSC
-
-Measures overlap between prediction and reference.
-
-```text
-1 = perfect overlap
-0 = no overlap
-```
-
-### NSD
-
-Normalized Surface Dice.
-
-Measures whether predicted and reference boundaries are within a physical
-distance tolerance, usually `1 mm`.
-
-### TP / FP / FN
-
-Voxel counts:
-
-```text
-TP = predicted class and reference class
-FP = predicted class but not reference class
-FN = reference class but prediction missed it
-```
-
-These counts are used to compute micro Dice.
-
-### Cohen's Kappa
-
-Used in the human-agreement script for two annotators.
-
-It measures agreement corrected for chance:
-
-```text
-1 = perfect agreement
-0 = chance-level agreement
-<0 = worse than chance
-```
-
-### Fleiss' Kappa
-
-Used in the human-agreement script for all three annotators together.
-
-It is the multi-rater version of kappa.
-
-## Output Files
-
-Most evaluators write:
-
-```text
-per_case_per_class.csv
-per_class_summary.csv
-overall_summary.json
 run_config.txt
+overall_summary.json
+per_case_fleiss_kappa.csv
+per_case_pair_multiclass.csv
+per_pair_multiclass_summary.csv
+per_case_pair_per_class.csv
+per_pair_per_class_summary.csv
 ```
 
-### `per_case_per_class.csv`
+The most useful files for performance comparison are:
 
-One row per case/class.
+- `overall_summary.json` for mean case-wise Fleiss' kappa.
+- `per_pair_multiclass_summary.csv` for model--expert whole-map kappa.
+- `per_pair_per_class_summary.csv` for model--expert organ Dice, NSD, and
+  binary kappa.
+- The `per_case_*` files for case-level inspection and exclusion analyses.
+- `run_config.txt` for the exact sources, cases, exclusions, and options.
 
-Typical columns:
+The command prints the overall summary when complete. Selected fields from a
+human-only run look like:
 
-```text
-case
-label or word_label
-class
-dsc
-nsd
-tp
-fp
-fn
+```json
+{
+  "metric_implementation_version": 2,
+  "sources": [
+    "annotation_1.nii.gz",
+    "annotation_2.nii.gz",
+    "annotation_3.nii.gz"
+  ],
+  "excluded_cases": [],
+  "cases": 65,
+  "mean_case_fleiss_kappa": 0.969,
+  "mean_case_foreground_fleiss_kappa": 0.863
+}
 ```
 
-### `per_class_summary.csv`
+Metric implementation version 2 retains organ-versus-background disagreements
+in foreground multiclass kappa and prevents integer overflow in pooled micro
+kappa. Older outputs should be regenerated before those two fields are used.
 
-Aggregates each class across all cases.
+## Batch evaluation
 
-Typical columns:
-
-```text
-mean_case_dsc
-mean_case_nsd
-micro_dsc
-tp
-fp
-fn
-cases_with_dsc
-cases_with_nsd
-```
-
-### `overall_summary.json`
-
-Compact model-level summary.
-
-Typical fields:
-
-```text
-macro_case_dsc
-macro_case_nsd
-micro_dsc
-tp
-fp
-fn
-```
-
-### `run_config.txt`
-
-Records the exact input paths, model specs, annotations, and label settings
-used for the run.
-
-## Example Commands
-
-Run `evaluate_word.py` directly:
+The three base models can be evaluated against all experts with:
 
 ```bash
-python evaluation/evaluate_word.py \
-  --word-root /home/s2347484/Seg/SuPreM/WORD/WORD-V0.1.0 \
-  --checkpoint /home/s2347484/Seg/SuPreM/pretrained_weights/supervised_suprem_segresnet_2100.pth \
-  --backbone segresnet \
-  --output-dir results/word_segresnet \
-  --save-predictions
+sbatch SuPreM/sbatch/evaluate_base_models_human_annotators.sbatch
 ```
 
-Evaluate saved testing-set predictions:
+Each array task writes one model's results under
+`results/results_65_testing_set/base_model_human_annotator_evaluation/`.
 
-```bash
-python evaluation/evaluate_testing_set_prediction_dirs.py \
-  --cases-root /home/s2347484/Seg/testing_set \
-  --annotation-name annotation_1.nii.gz \
-  --output-dir results/CURVAS_EVAL \
-  --model clip_unet=results/CURVAS_INFERENCE/clip_universal_unet:suprem
-```
+## Other utilities
 
-Run human agreement while excluding the known bad geometry case:
+- `check_testing_set_annotation_affines.py`: checks annotation shape, spacing,
+  and affine consistency.
+- `evaluate_testing_set_prediction_dirs.py`: evaluates saved predictions
+  against one selected expert annotation.
+- `evaluate_prediction_mask_agreement.py`: compares prediction masks with one
+  another.
+- `evaluate_word.py` and `evaluate_word_prediction_dirs.py`: WORD inference and
+  evaluation.
+- `evaluate_3d_dataset_prediction_dirs.py`: evaluates supported labels in the
+  3D dataset.
 
-```bash
-python evaluation/evaluate_testing_set_human_agreement.py \
-  --cases-root /home/s2347484/Seg/testing_set \
-  --output-dir results/testing_set_human_agreement \
-  --exclude-case UKCHLL007
-```
-
-Run human agreement and compare the same annotations against an external
-prediction directory:
-
-```bash
-python evaluation/evaluate_testing_set_human_agreement.py \
-  --cases-root /home/s2347484/Seg/testing_set \
-  --output-dir results/testing_set_human_plus_weighted_65case \
-  --prediction-dir weighted=results/CURVAS_INFERENCE/agreement_masks_weighted_65case \
-  --skip-nsd
-```
-
-## Revision Note
-
-The evaluation scripts repeat several useful pieces:
-
-```text
-argument parsing
-NIfTI loading
-integer-label validation
-case matching
-affine/shape validation
-binary Dice/NSD calculation
-CSV writing
-summary aggregation
-```
-
-A future cleanup could move these into a shared evaluation utility module. Then
-each evaluator would only define:
-
-```text
-dataset-specific labels
-label-space remapping
-which cases/classes to evaluate
-which summary metrics to write
-```
+Use `python <script> --help` for the complete arguments. NIfTI-based evaluation
+requires the dependencies declared in `SuPreM/requirements.txt`.

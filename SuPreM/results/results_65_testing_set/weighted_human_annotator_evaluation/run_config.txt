@@ -1,6 +1,7 @@
 metric_implementation_version=2
 cases_root=/home/s2347484/Seg/testing_set
-annotations=annotation_1.nii.gz,annotation_2.nii.gz,annotation_3.nii.gz,agreement_mask.nii.gz
+annotations=annotation_1.nii.gz,annotation_2.nii.gz,annotation_3.nii.gz
+prediction_dirs=[{"directory": "/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/weighted_consensus_training_weights/testing/consensus_masks", "name": "weighted_training_consensus"}]
 excluded_cases=
 nsd_tolerance_mm=1.0
 ignore_affine=False

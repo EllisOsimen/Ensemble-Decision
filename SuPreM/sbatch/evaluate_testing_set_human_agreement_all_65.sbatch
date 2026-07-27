@@ -15,7 +15,7 @@ set -euo pipefail
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
 CASES_ROOT="/home/s2347484/Seg/testing_set"
-OUTPUT_DIR="${PROJECT_DIR}/results/testing_set_human_agreement_all_65"
+OUTPUT_DIR="${PROJECT_DIR}/results/results_65_testing_set/human_annotator_evaluation"
 
 if [[ ! -d "${CASES_ROOT}" ]]; then
     echo "Testing cases root not found: ${CASES_ROOT}" >&2

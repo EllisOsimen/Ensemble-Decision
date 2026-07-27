@@ -5,7 +5,7 @@ the 64-case sensitivity summaries reported in `SuPreM/results/`.
 
 ## Sensitivity summaries
 
-`summarize_agreement_excluding_cases.py` reads the canonical per-case CSVs from
+`summarise_agreement_excluding_cases.py` reads the canonical per-case CSVs from
 `results/results_65_testing_set/`, excludes `UKCHLL082` by default, and writes
 both the method and base-model tables under `results/results_64_testing_set/`.
 It does not rerun inference.
@@ -25,7 +25,7 @@ because they already contain values calculated from all 65 cases.
 From the repository root, run:
 
 ```bash
-python SuPreM/statistics/summarize_agreement_excluding_cases.py
+python SuPreM/statistics/summarise_agreement_excluding_cases.py
 ```
 
 Use `--group methods` or `--group base-models` to generate only one table set.
@@ -33,7 +33,7 @@ An additional exclusion is added to the default `UKCHLL082` exclusion as
 follows:
 
 ```bash
-python SuPreM/statistics/summarize_agreement_excluding_cases.py \
+python SuPreM/statistics/summarise_agreement_excluding_cases.py \
   --exclude-case UKCHLL007
 ```
 

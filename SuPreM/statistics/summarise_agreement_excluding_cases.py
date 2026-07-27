@@ -79,7 +79,7 @@ METHOD_GROUP = EvaluationGroup(
         ),
         Evaluation(
             "Weighted",
-            Path("wighted_human_annotator_evaluation"),
+            Path("weighted_human_annotator_evaluation"),
             "weighted_training_consensus",
         ),
         Evaluation(
@@ -89,7 +89,7 @@ METHOD_GROUP = EvaluationGroup(
         ),
         Evaluation(
             "Random Forest",
-            Path("random_forrest_human_annotator_evaluation"),
+            Path("random_forest_human_annotator_evaluation"),
             "random_forest_config_002",
         ),
     ),

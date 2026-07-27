@@ -18,8 +18,8 @@ set -euo pipefail
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
 CASES_ROOT="/home/s2347484/Seg/testing_set"
-PREDICTION_ROOT="${PROJECT_DIR}/results/all_curvas_inference_with_confidence/testing"
-OUTPUT_ROOT="${PROJECT_DIR}/results/base_model_human_annotator_evaluation"
+PREDICTION_ROOT="${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/testing"
+OUTPUT_ROOT="${PROJECT_DIR}/results/results_65_testing_set/base_model_human_annotator_evaluation"
 
 MODEL_NAMES=(clip_unet segresnet swin5050)
 MODEL_DIRS=(clip_universal_unet suprem_segresnet swinunetr_5050)

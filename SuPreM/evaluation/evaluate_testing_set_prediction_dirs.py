@@ -27,9 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
-from surface_distance import metrics as surface_distance_metrics
 from tqdm import tqdm
 
 
@@ -202,6 +200,8 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
 def load_integer_mask(path: Path, atol: float = 1e-3) -> tuple[nib.Nifti1Image, np.ndarray]:
     """Load a NIfTI label map and ensure it contains integer-like class IDs."""
 
+    import nibabel as nib
+
     image = nib.load(str(path))
     data = np.asanyarray(image.dataobj)
     if not np.issubdtype(data.dtype, np.integer):
@@ -270,6 +270,8 @@ def validate_grid(case_name, label_image, prediction_image, model, ignore_affine
 
 def binary_metrics(prediction, gold, spacing, tolerance_mm):
     """Compute Dice, normalized surface Dice, and voxel confusion counts."""
+
+    from surface_distance import metrics as surface_distance_metrics
 
     # Convert to booleans first so the same metric code works for any label ID.
     prediction = np.asarray(prediction, dtype=bool)

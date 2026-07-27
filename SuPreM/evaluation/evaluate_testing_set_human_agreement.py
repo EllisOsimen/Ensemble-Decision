@@ -28,9 +28,7 @@ from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
-from surface_distance import metrics as surface_distance_metrics
 from tqdm import tqdm
 
 from evaluate_testing_set_prediction_dirs import (
@@ -49,6 +47,7 @@ TARGET_LABELS = {
     2: "kidney",
     3: "liver",
 }
+METRIC_IMPLEMENTATION_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -146,7 +145,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=PROJECT_DIR / "results" / "testing_set_human_agreement",
+        default=(
+            PROJECT_DIR
+            / "results"
+            / "results_65_testing_set"
+            / "human_annotator_evaluation"
+        ),
         help="Directory where agreement CSV and JSON summaries will be written.",
     )
     parser.add_argument(
@@ -181,6 +185,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip all NSD calculations and write NaN in NSD columns.",
     )
+    parser.add_argument(
+        "--allow-missing-predictions",
+        action="store_true",
+        help=(
+            "Evaluate the intersection of available cases when a prediction "
+            "directory is incomplete. By default, missing predictions stop "
+            "the run to prevent unfair comparisons across different case sets."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -197,8 +210,10 @@ def load_integer_mask(
     path: Path,
     atol: float = 1e-3,
     require_target_labels: bool = True,
-) -> tuple[nib.Nifti1Image, np.ndarray]:
+) -> tuple[object, np.ndarray]:
     """Load a NIfTI label map and verify it uses the expected integer labels."""
+
+    import nibabel as nib
 
     image = nib.load(str(path))
     data = np.asanyarray(image.dataobj)
@@ -304,8 +319,11 @@ def binary_counts_from_confusion(confusion: np.ndarray, label_value: int):
     """
 
     tp = int(confusion[label_value, label_value])
-    fp = int(confusion[label_value, :].sum() - tp)
-    fn = int(confusion[:, label_value].sum() - tp)
+    # Rows are rater A (reference) and columns are rater B (comparison).
+    # A false positive is therefore a column-label voxel outside the selected
+    # row, while a false negative is a selected row voxel outside the column.
+    fp = int(confusion[:, label_value].sum() - tp)
+    fn = int(confusion[label_value, :].sum() - tp)
     tn = int(confusion.sum() - tp - fp - fn)
 
     denominator = 2 * tp + fp + fn
@@ -316,6 +334,8 @@ def binary_counts_from_confusion(confusion: np.ndarray, label_value: int):
 
 def binary_nsd(first, second, spacing, tolerance_mm):
     """Compute normalized surface Dice for one binary class mask pair."""
+
+    from surface_distance import metrics as surface_distance_metrics
 
     first = np.asarray(first, dtype=bool)
     second = np.asarray(second, dtype=bool)
@@ -350,8 +370,10 @@ def cohen_kappa_from_counts(confusion: np.ndarray) -> float:
     if total == 0:
         return math.nan
     observed = float(np.trace(confusion) / total)
-    row_totals = confusion.sum(axis=1)
-    col_totals = confusion.sum(axis=0)
+    # Cast before multiplying the marginals. Pooled testing-set counts can be
+    # large enough for an int64 dot product to overflow silently.
+    row_totals = confusion.sum(axis=1, dtype=np.float64)
+    col_totals = confusion.sum(axis=0, dtype=np.float64)
     expected = float(np.dot(row_totals, col_totals) / (total * total))
     if math.isclose(1.0, expected):
         return 1.0 if math.isclose(observed, 1.0) else math.nan
@@ -372,7 +394,12 @@ def multiclass_pair_metrics(first: np.ndarray, second: np.ndarray) -> dict[str, 
     foreground_union = np.logical_or(first != 0, second != 0)
     if foreground_union.any():
         foreground_exact = float((first[foreground_union] == second[foreground_union]).mean())
-        foreground_confusion = confusion[1:, 1:]
+        # Background is retained as a category inside the foreground union so
+        # organ-versus-background disagreements contribute to kappa. Slicing
+        # confusion[1:, 1:] would incorrectly discard those errors.
+        foreground_confusion = pair_confusion(
+            first[foreground_union], second[foreground_union]
+        )
         foreground_kappa = cohen_kappa_from_counts(foreground_confusion)
     else:
         foreground_exact = math.nan
@@ -528,7 +555,6 @@ def main() -> None:
         raise ValueError("Pass at least two annotation filenames.")
 
     # Decide which cases are in this run before loading any large NIfTI arrays.
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     case_dirs = case_directories(args.cases_root)
     sources = [LabelSource(annotation_name) for annotation_name in args.annotations]
     prediction_source_info = []
@@ -543,35 +569,53 @@ def main() -> None:
     if len(source_names) != len(set(source_names)):
         raise ValueError(f"Label source names must be unique: {source_names}")
 
+    pair_labels = [source.pair_label for source in sources]
+    if len(pair_labels) != len(set(pair_labels)):
+        raise ValueError(
+            "Label source names must remain unique after removing NIfTI suffixes: "
+            f"{pair_labels}"
+        )
+
     case_names = sorted(case_dirs)
+    if args.case_name is not None:
+        if args.case_name not in case_dirs:
+            raise FileNotFoundError(f"{args.case_name} not found in {args.cases_root}")
+        case_names = [args.case_name]
+
+    excluded_cases = set(args.exclude_case)
+    case_names = [case_name for case_name in case_names if case_name not in excluded_cases]
+    if not case_names:
+        raise ValueError("No cases left to process after applying --case-name/--exclude-case.")
+
     for source in sources:
         if source.path_by_case is None:
             continue
         missing_predictions = sorted(set(case_names) - set(source.path_by_case))
         if missing_predictions:
-            print(
-                f"WARNING: {source.name} is missing {len(missing_predictions)} prediction(s), "
+            message = (
+                f"{source.name} is missing {len(missing_predictions)} prediction(s), "
                 f"e.g. {missing_predictions[:3]}"
             )
-        extra_predictions = sorted(set(source.path_by_case) - set(case_names))
+            if not args.allow_missing_predictions:
+                raise FileNotFoundError(
+                    message
+                    + ". Pass --allow-missing-predictions to evaluate only "
+                    "the common cases."
+                )
+            print(f"WARNING: {message}")
+        extra_predictions = sorted(set(source.path_by_case) - set(case_dirs))
         if extra_predictions:
             print(
                 f"WARNING: {source.name} has {len(extra_predictions)} prediction(s) without "
                 f"testing-set case folders, e.g. {extra_predictions[:3]}"
             )
-        case_names = sorted(set(case_names) & set(source.path_by_case))
+        if args.allow_missing_predictions:
+            case_names = sorted(set(case_names) & set(source.path_by_case))
 
-    if args.case_name is not None:
-        if args.case_name not in case_dirs:
-            raise FileNotFoundError(f"{args.case_name} not found in {args.cases_root}")
-        for source in sources:
-            if source.path_by_case is not None and args.case_name not in source.path_by_case:
-                raise FileNotFoundError(f"{args.case_name} not found for {source.name}")
-        case_names = [args.case_name]
-    excluded_cases = set(args.exclude_case)
-    case_names = [case_name for case_name in case_names if case_name not in excluded_cases]
     if not case_names:
-        raise ValueError("No cases left to process after applying --case-name/--exclude-case.")
+        raise ValueError("No common cases remain across the requested label sources.")
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Detailed rows keep per-case information. The totals dictionaries collect
     # enough information to build mean-case and micro summaries at the end.
@@ -589,6 +633,9 @@ def main() -> None:
     # Save the exact run settings next to the outputs so old CSVs remain
     # interpretable later.
     with (args.output_dir / "run_config.txt").open("w") as handle:
+        handle.write(
+            f"metric_implementation_version={METRIC_IMPLEMENTATION_VERSION}\n"
+        )
         handle.write(f"cases_root={args.cases_root}\n")
         handle.write(f"annotations={','.join(args.annotations)}\n")
         handle.write(
@@ -597,10 +644,15 @@ def main() -> None:
             + "\n"
         )
         handle.write(f"excluded_cases={','.join(sorted(excluded_cases))}\n")
+        handle.write(f"case_count={len(case_names)}\n")
+        handle.write(f"evaluated_cases={','.join(case_names)}\n")
         handle.write(f"nsd_tolerance_mm={args.nsd_tolerance_mm}\n")
         handle.write(f"ignore_affine={args.ignore_affine}\n")
         handle.write(f"include_background_nsd={args.include_background_nsd}\n")
         handle.write(f"skip_nsd={args.skip_nsd}\n")
+        handle.write(
+            f"allow_missing_predictions={args.allow_missing_predictions}\n"
+        )
 
     for case_name in tqdm(case_names, desc="Human agreement"):
         case_dir = case_dirs[case_name]
@@ -728,12 +780,15 @@ def main() -> None:
     # Overall JSON is intentionally compact: it highlights the multi-rater
     # agreement numbers most useful as a human-human baseline.
     overall = {
+        "metric_implementation_version": METRIC_IMPLEMENTATION_VERSION,
         "cases_root": str(args.cases_root),
         "annotations": args.annotations,
         "prediction_dirs": prediction_source_info,
         "sources": [source.name for source in sources],
         "excluded_cases": sorted(excluded_cases),
         "cases": len(case_names),
+        "evaluated_cases": case_names,
+        "allow_missing_predictions": args.allow_missing_predictions,
         "nsd_tolerance_mm": args.nsd_tolerance_mm,
         "mean_case_fleiss_kappa": (
             float(np.mean(fleiss_totals["fleiss_kappa"])) if fleiss_totals["fleiss_kappa"] else math.nan
