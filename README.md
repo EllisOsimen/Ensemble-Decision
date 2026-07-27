@@ -10,25 +10,27 @@ by CLIP Universal U-Net, SuPreM SegResNet, and Swin UNETR 5050, then remapped
 to the common CURVAS label space: `0` background, `1` pancreas, `2` kidney,
 and `3` liver.
 
-The final comparison is based on 65 held-out testing cases. Each consensus mask
-was evaluated jointly with the three independent human annotations using
-Fleiss' kappa; foreground Fleiss' kappa excludes the dominant background
-class. The normalized surface Dice tolerance used by the evaluator was 1 mm.
+The dataset contains 65 held-out testing cases. The final reported comparison
+uses 64 of them because `UKCHLL082` was excluded owing to incomplete pancreas
+and liver annotations. Each consensus mask was evaluated jointly with the
+three independent human annotations using Fleiss' kappa; foreground Fleiss'
+kappa excludes the dominant background class. The normalized surface Dice
+tolerance used by the evaluator was 1 mm.
 
 ## Ensemble Approaches And Results
 
 | Method | Technique | What it checks | Mean case Fleiss' kappa | Mean foreground Fleiss' kappa |
 | --- | --- | --- | ---: | ---: |
-| **Unweighted consensus** | The non-learned baseline. It applies the legacy three-model agreement rule: preserve unanimous and two-model organ votes, treat two background votes conservatively, and resolve fully discordant voxels using local support or the CLIP U-Net fallback. | Whether simple model agreement alone can improve robustness, without using training-derived reliability or labels. | 0.9395 | 0.7796 |
-| **Weighted consensus** | An organ-aware deterministic fusion. Each model's pancreas, kidney, and liver vote is weighted by its mean patient-level Dice on the 20 training cases against `annotation_1.nii.gz`. Weak/strong thresholds reject unreliable isolated votes while retaining connected evidence and all two-model agreements. | Whether known, organ-specific differences in model reliability improve over the unweighted baseline without needing a voxel-level classifier. | 0.9401 | 0.7803 |
-| **STAPLE** | Per-organ binary STAPLE fusion. The procedure estimates each base segmenter's sensitivity/specificity and combines their masks into posterior probabilities before resolving the multi-organ label. | Whether an established probabilistic label-fusion method provides a better consensus than the hand-designed unweighted rule. | 0.9506 | 0.7908 |
-| **Random-forest stacking** | A supervised, voxel-wise classifier fitted on the 20 training patients. It receives 12 one-hot base-label features plus the three assigned-label confidence values; identical validity masks prevent crop-exterior voxels from being learned as foreground. The final `config_002` uses 100 trees, maximum depth 5, all features per split, and `random_state=42`. | Whether training labels and calibrated model evidence can learn complementary error patterns that deterministic fusion misses. Testing annotations are not used to train or infer the masks. | **0.9527** | **0.8010** |
+| **Unweighted consensus** | The non-learned baseline. It applies the legacy three-model agreement rule: preserve unanimous and two-model organ votes, treat two background votes conservatively, and resolve fully discordant voxels using local support or the CLIP U-Net fallback. | Whether simple model agreement alone can improve robustness, without using training-derived reliability or labels. | 0.9440 | 0.7902 |
+| **Weighted consensus** | An organ-aware deterministic fusion. Each model's pancreas, kidney, and liver vote is weighted by its mean patient-level Dice on the 20 training cases against `annotation_1.nii.gz`. Weak/strong thresholds reject unreliable isolated votes while retaining connected evidence and all two-model agreements. | Whether known, organ-specific differences in model reliability improve over the unweighted baseline without needing a voxel-level classifier. | 0.9447 | 0.7910 |
+| **STAPLE** | Per-organ binary STAPLE fusion. The procedure estimates each base segmenter's sensitivity/specificity and combines their masks into posterior probabilities before resolving the multi-organ label. | Whether an established probabilistic label-fusion method provides a better consensus than the hand-designed unweighted rule. | 0.9553 | 0.8018 |
+| **Random-forest stacking** | A supervised, voxel-wise classifier fitted on the 20 training patients. It receives 12 one-hot base-label features plus the three assigned-label confidence values; identical validity masks prevent crop-exterior voxels from being learned as foreground. The final `config_002` uses 100 trees, maximum depth 5, all features per split, and `random_state=42`. | Whether training labels and calibrated model evidence can learn complementary error patterns that deterministic fusion misses. Testing annotations are not used to train or infer the masks. | **0.9575** | **0.8120** |
 
 These values are recorded in
-[`SuPreM/results/testing_set_human_annotator_evaluation_overall_summary.csv`](SuPreM/results/testing_set_human_annotator_evaluation_overall_summary.csv).
-All four methods covered 65 cases with no exclusions. Results should be
-interpreted as agreement with the three human annotators, rather than as a
-single-reference segmentation score.
+[`agreement_table_excluding_cases.csv`](SuPreM/results/results_64_testing_set/testing_set_agreement_summary_exclude_UKCHLL082_from_csv/agreement_table_excluding_cases.csv).
+All four methods covered the same 64 cases, with only `UKCHLL082` excluded.
+Results should be interpreted as agreement with the three human annotators,
+rather than as a single-reference segmentation score.
 
 ## Required Repository Layout
 
@@ -62,12 +64,14 @@ Ensemble-Decision/
 ```
 
 The CURVAS experiment uses 20 training cases, 5 validation cases, and 65
-testing cases. Every per-case NIfTI image and annotation must have the same
-voxel shape and affine transform. The inference array accepts either
-`image.nii.gz` or `ct.nii.gz` as the CT filename, but the layout above matches
-the current CURVAS data. `annotation_1.nii.gz` is the training target for the
-random forest and for deriving weighted-consensus weights; all three testing
-annotations are retained for the final agreement evaluation.
+testing cases. Model inference and the canonical per-case evaluation cover all
+65 testing scans; the final summary excludes `UKCHLL082`, leaving 64 cases.
+Every per-case NIfTI image and annotation must have the same voxel shape and
+affine transform. The inference array accepts either `image.nii.gz` or
+`ct.nii.gz` as the CT filename, but the layout above matches the current CURVAS
+data. `annotation_1.nii.gz` is the training target for the random forest and
+for deriving weighted-consensus weights; testing annotations are used only for
+evaluation.
 
 Place the required checkpoints under `SuPreM/pretrained_weights/`:
 
@@ -77,11 +81,10 @@ supervised_suprem_segresnet_2100.pth
 self_supervised_nv_swin_unetr_5050.pt
 ```
 
-Generated model outputs must remain under the following root so the supplied
-fusion wrappers find them:
+Generated model outputs are currently organised under the following root:
 
 ```text
-SuPreM/results/all_curvas_inference_with_confidence/
+SuPreM/results/all_datasets_curvas_inference_with_confidence/
 ├── training|validation|testing/
 │   ├── clip_universal_unet/
 │   ├── clip_universal_unet_confidence/
@@ -92,9 +95,13 @@ SuPreM/results/all_curvas_inference_with_confidence/
 │   ├── swinunetr_5050/
 │   ├── swinunetr_5050_confidence/
 │   └── swinunetr_5050_validity/
-├── weighted_consensus_training_weights/
+├── weighted_consensus_training_masks/
 └── random_forest_config_002_final/
 ```
+
+Some saved configurations and Slurm wrappers retain the earlier directory
+name `all_curvas_inference_with_confidence`; update those machine-specific
+paths to `all_datasets_curvas_inference_with_confidence` before rerunning them.
 
 Hard-label, confidence, and validity maps use one identically named NIfTI file
 per case. Confidence values are stored as scaled `uint8`; validity maps are
@@ -143,15 +150,22 @@ pip install -r requirements.txt
   sbatch sbatch/train_final_random_forest_config_002.sbatch
   ```
 
-4. Evaluate fused testing masks with the three expert annotations. The random
-  forest and weighted wrappers are provided directly:
+4. Evaluate all 65 fused testing masks with the three expert annotations. The
+  random forest and weighted wrappers are provided directly:
 
   ```bash
   sbatch sbatch/evaluate_final_random_forest_human_annotators.sbatch
   sbatch sbatch/evaluate_weighted_consensus_human_annotators.sbatch
   ```
 
-The evaluator writes per-class summaries, pairwise multiclass summaries, and
-an `overall_summary.json`. To regenerate the consolidated four-method result
-table, collect the two kappa fields from each method's `overall_summary.json`
-into `testing_set_human_annotator_evaluation_overall_summary.csv`.
+5. From the repository root, regenerate the final 64-case method and base-model
+  tables by excluding `UKCHLL082` from the canonical per-case CSVs:
+
+  ```bash
+  python SuPreM/statistics/summarise_agreement_excluding_cases.py
+  ```
+
+The evaluator writes the canonical 65-case per-case CSVs and aggregate files.
+The final command does not rerun inference or evaluation: it removes
+`UKCHLL082` from the per-case CSVs and recalculates the reported 64-case means
+and standard deviations under `SuPreM/results/results_64_testing_set/`.
