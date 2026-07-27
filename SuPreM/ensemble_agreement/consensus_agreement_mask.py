@@ -952,7 +952,7 @@ def consensus_agreement_mask(
     connectivity: int = 3,
     clip_fallback: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Run the original Agreement.MD consensus rule and confidence coding."""
+    """Run the legacy voting rule documented in agreement.md."""
 
     shapes = {array.shape for array in (first, second, third)}
     if len(shapes) != 1:

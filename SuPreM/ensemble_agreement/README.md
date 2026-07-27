@@ -60,4 +60,5 @@ case-82-excluded summaries in `results/results_64_testing_set/`.
 
 Use `python <script> --help` for all command-line options. The older WORD
 agreement experiments are kept separately in `Legacy_WORD_experiments/` and
-are not part of these four reported methods.
+are not part of these four reported methods. See `agreement.md` for the exact
+unweighted and weighted voting cases.
