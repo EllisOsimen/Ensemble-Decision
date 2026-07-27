@@ -1,0 +1,18 @@
+{
+  "comparison": "annotation_1_vs_annotation_2",
+  "row_source": "annotation_1.nii.gz",
+  "column_source": "annotation_2.nii.gz",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "case_count": 64,
+  "excluded_cases": [
+    "UKCHLL082"
+  ],
+  "source_scheduler_job": "3564995",
+  "migrated_from": "annotation_1_vs_annotation_2_3564994_0.out",
+  "label_order": [
+    "background",
+    "pancreas",
+    "kidney",
+    "liver"
+  ]
+}

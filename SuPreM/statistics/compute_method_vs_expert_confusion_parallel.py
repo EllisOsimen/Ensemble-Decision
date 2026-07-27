@@ -15,8 +15,9 @@ import gzip
 from multiprocessing import Pool
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
+
+from confusion_matrix_output import write_confusion_outputs
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +78,15 @@ def parse_args():
         default=WORKERS,
         help="Number of worker processes.",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory for labelled CSV matrices and metadata. "
+            "Results are always printed to stdout."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -96,6 +106,8 @@ def scaled_labels(values: np.ndarray, proxy) -> np.ndarray:
 
 def process_case(task):
     """Return raw and row-normalized expert-versus-method counts."""
+
+    import nibabel as nib
 
     case_dir, expert_annotation, method_name, method_root, method_layout = task
     expert_path = case_dir / expert_annotation
@@ -179,6 +191,8 @@ def main():
         raise NotADirectoryError(f"Testing-set directory not found: {args.cases_root}")
     if not args.method_root.is_dir():
         raise NotADirectoryError(f"Method directory not found: {args.method_root}")
+    if args.workers < 1:
+        raise ValueError("--workers must be at least 1")
 
     case_dirs = sorted(
         path for path in args.cases_root.iterdir()
@@ -227,6 +241,25 @@ def main():
     print(sd_patient * 100)
     print("RESULT row_sums")
     print((mean_patient * 100).sum(axis=1))
+
+    if args.output_dir is not None:
+        write_confusion_outputs(
+            args.output_dir,
+            {
+                "expert_annotation": args.expert_annotation,
+                "method_name": args.method_name,
+                "method_root": str(args.method_root.resolve()),
+                "method_layout": args.method_layout,
+                "cases_root": str(args.cases_root.resolve()),
+                "case_count": len(case_dirs),
+                "excluded_cases": sorted(excluded_cases),
+            },
+            pooled,
+            pooled_normalized * 100,
+            mean_patient * 100,
+            sd_patient * 100,
+        )
+        print(f"WROTE {args.output_dir}")
 
 
 if __name__ == "__main__":

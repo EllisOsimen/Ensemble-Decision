@@ -5,7 +5,6 @@ import argparse
 import csv
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
 
 
@@ -104,6 +103,8 @@ def nifti_paths(directory):
 
 def load_label_map(path):
     """Load one non-empty label array."""
+    import nibabel as nib
+
     image = nib.load(str(path))
     data = np.asanyarray(image.dataobj)
     if data.size == 0:

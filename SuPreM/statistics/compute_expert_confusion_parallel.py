@@ -23,8 +23,9 @@ import gzip
 from multiprocessing import Pool
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
+
+from confusion_matrix_output import write_confusion_outputs
 
 
 # This file is SuPreM/statistics/<script>.py, so parents[2] is the repository
@@ -74,6 +75,15 @@ def parse_args():
         default=WORKERS,
         help="Number of worker processes.",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional directory for labelled CSV matrices and metadata. "
+            "Results are always printed to stdout."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -86,6 +96,8 @@ def process_case(case_dir: Path, row_annotation: str, column_annotation: str):
         2. a 4 x 4 matrix of raw voxel counts;
         3. that matrix normalized so every row sums to one.
     """
+
+    import nibabel as nib
 
     # The first annotation is represented by matrix rows, while the second
     # annotation supplies the comparison labels in the columns.
@@ -159,6 +171,11 @@ if __name__ == "__main__":
     args = parse_args()
     excluded_cases = set(args.exclude_case)
 
+    if not args.cases_root.is_dir():
+        raise NotADirectoryError(f"Testing-set directory not found: {args.cases_root}")
+    if args.workers < 1:
+        raise ValueError("--workers must be at least 1")
+
     print(
         f"COMPARISON rows={args.row_annotation} columns={args.column_annotation}",
         flush=True,
@@ -174,6 +191,8 @@ if __name__ == "__main__":
         path for path in args.cases_root.iterdir()
         if path.is_dir() and path.name not in excluded_cases
     )
+    if not case_dirs:
+        raise RuntimeError(f"No testing cases found in {args.cases_root}")
     results = []
     tasks = [
         (case_dir, args.row_annotation, args.column_annotation)
@@ -221,3 +240,20 @@ if __name__ == "__main__":
     print(sd_patient * 100)
     print("RESULT row_sums")
     print((mean_patient * 100).sum(axis=1))
+
+    if args.output_dir is not None:
+        write_confusion_outputs(
+            args.output_dir,
+            {
+                "row_annotation": args.row_annotation,
+                "column_annotation": args.column_annotation,
+                "cases_root": str(args.cases_root.resolve()),
+                "case_count": len(case_dirs),
+                "excluded_cases": sorted(excluded_cases),
+            },
+            pooled,
+            pooled_normalized * 100,
+            mean_patient * 100,
+            sd_patient * 100,
+        )
+        print(f"WROTE {args.output_dir}")

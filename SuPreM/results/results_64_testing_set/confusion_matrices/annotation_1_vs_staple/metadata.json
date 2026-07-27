@@ -1,0 +1,20 @@
+{
+  "comparison": "annotation_1_vs_staple",
+  "row_source": "annotation_1.nii.gz",
+  "column_source": "staple",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "case_count": 64,
+  "excluded_cases": [
+    "UKCHLL082"
+  ],
+  "method_root_at_run_time": "/home/s2347484/Seg/SuPreM/results/legacy/CURVAS_INFERENCE/agreement_masks_staple",
+  "method_layout": "flat",
+  "source_scheduler_job": "3565025",
+  "migrated_from": "annotation_1_vs_staple_3565023_6.out",
+  "label_order": [
+    "background",
+    "pancreas",
+    "kidney",
+    "liver"
+  ]
+}

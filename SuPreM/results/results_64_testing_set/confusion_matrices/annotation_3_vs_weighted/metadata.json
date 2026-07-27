@@ -1,0 +1,20 @@
+{
+  "comparison": "annotation_3_vs_weighted",
+  "row_source": "annotation_3.nii.gz",
+  "column_source": "weighted",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "case_count": 64,
+  "excluded_cases": [
+    "UKCHLL082"
+  ],
+  "method_root_at_run_time": "/home/s2347484/Seg/SuPreM/results/all_curvas_inference_with_confidence/weighted_consensus_training_weights/testing/consensus_masks",
+  "method_layout": "flat",
+  "source_scheduler_job": "3565024",
+  "migrated_from": "annotation_3_vs_weighted_3565023_5.out",
+  "label_order": [
+    "background",
+    "pancreas",
+    "kidney",
+    "liver"
+  ]
+}

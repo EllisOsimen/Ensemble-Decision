@@ -1,0 +1,20 @@
+{
+  "comparison": "annotation_3_vs_unweighted",
+  "row_source": "annotation_3.nii.gz",
+  "column_source": "unweighted",
+  "cases_root": "/home/s2347484/Seg/testing_set",
+  "case_count": 64,
+  "excluded_cases": [
+    "UKCHLL082"
+  ],
+  "method_root_at_run_time": "/home/s2347484/Seg/SuPreM/results/legacy/CURVAS_INFERENCE/agreement_masks_target",
+  "method_layout": "flat",
+  "source_scheduler_job": "3565002",
+  "migrated_from": "annotation_3_vs_unweighted_3564999_2.out",
+  "label_order": [
+    "background",
+    "pancreas",
+    "kidney",
+    "liver"
+  ]
+}
