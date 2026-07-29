@@ -1,0 +1,5 @@
+method,pair,mean_case_multiclass_kappa,cases_with_multiclass_kappa,mean_case_exact_agreement,cases_with_exact_agreement,mean_case_foreground_multiclass_kappa,cases_with_foreground_multiclass_kappa,mean_case_foreground_exact_agreement,cases_with_foreground_exact_agreement
+unweighted,combined_mask_vs_unweighted,0.9266606078780707,50,0.995229449572809,50,0.9993559258769512,50,0.8755298940588692,50
+weighted,combined_mask_vs_weighted,0.922910450107443,50,0.9951904380687399,50,0.9991965587160101,50,0.8714895677526264,50
+staple,combined_mask_vs_staple,0.9475098322923601,50,0.9972843754931263,50,0.9997782838212071,50,0.9116529140492747,50
+random_forest_config_002,combined_mask_vs_random_forest_config_002,0.9346050816913273,50,0.9966832366203999,50,0.9990417928043449,50,0.8929554680161771,50

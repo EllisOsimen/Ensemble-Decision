@@ -210,6 +210,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--model-output", type=Path, default=DEFAULT_MODEL_OUTPUT)
     parser.add_argument(
+        "--model-input",
+        type=Path,
+        default=None,
+        help=(
+            "Previously fitted joblib model to load with --inference-only. "
+            "Its adjacent .metadata.json file is checked when present."
+        ),
+    )
+    parser.add_argument(
         "--model-dir",
         dest="model_dirs",
         type=Path,
@@ -279,10 +288,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--predict-chunk-size", type=int, default=1_000_000)
     parser.add_argument("--skip-missing", action="store_true")
-    parser.add_argument(
+    execution_mode = parser.add_mutually_exclusive_group()
+    execution_mode.add_argument(
         "--train-only",
         action="store_true",
         help="Fit and save the random forest without running validation inference.",
+    )
+    execution_mode.add_argument(
+        "--inference-only",
+        action="store_true",
+        help="Load --model-input and run inference without retraining the forest.",
     )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -1271,6 +1286,69 @@ def metadata_path_for_model(model_output: Path) -> Path:
     return model_output.with_suffix(".metadata.json")
 
 
+def load_model_for_inference(
+    model_input: Path | None,
+    specs: list[ModelSpec],
+) -> RandomForestClassifier:
+    """Load a fitted forest and reject incompatible feature configurations."""
+
+    if model_input is None:
+        raise ValueError("--model-input is required with --inference-only.")
+    if not model_input.is_file():
+        raise FileNotFoundError(f"Random-forest model not found: {model_input}")
+
+    classifier = joblib.load(model_input)
+    for method_name in ("predict", "predict_proba"):
+        if not callable(getattr(classifier, method_name, None)):
+            raise TypeError(
+                f"Loaded object from {model_input} has no callable {method_name} method."
+            )
+
+    expected_feature_names = feature_names(specs)
+    actual_feature_count = getattr(classifier, "n_features_in_", None)
+    if actual_feature_count != len(expected_feature_names):
+        raise ValueError(
+            f"Model {model_input} expects {actual_feature_count} features, but the "
+            f"configured inputs produce {len(expected_feature_names)}."
+        )
+
+    actual_classes = [int(label) for label in getattr(classifier, "classes_", [])]
+    if actual_classes != list(CURVAS_LABELS):
+        raise ValueError(
+            f"Model {model_input} has classes {actual_classes}; expected "
+            f"{list(CURVAS_LABELS)}."
+        )
+
+    metadata_path = metadata_path_for_model(model_input)
+    if metadata_path.is_file():
+        metadata = json.loads(metadata_path.read_text())
+        expected_metadata = {
+            "feature_names": expected_feature_names,
+            "model_ids": [spec.model_id for spec in specs],
+            "label_spaces": [spec.label_space for spec in specs],
+            "uses_confidence": uses_confidence(specs),
+            "uses_validity": uses_validity(specs),
+        }
+        mismatches = {
+            key: {"model": metadata.get(key), "configured": expected}
+            for key, expected in expected_metadata.items()
+            if metadata.get(key) != expected
+        }
+        if mismatches:
+            raise ValueError(
+                f"Model metadata {metadata_path} is incompatible with the "
+                f"configured inference inputs: {mismatches}"
+            )
+        print(f"Validated model metadata: {metadata_path}")
+    else:
+        print(
+            f"WARNING: no model metadata found at {metadata_path}; "
+            "only feature count and class labels were checked."
+        )
+
+    return classifier
+
+
 def save_model_and_metadata(
     classifier: RandomForestClassifier,
     specs: list[ModelSpec],
@@ -1353,34 +1431,60 @@ def main() -> None:
 
     specs = resolve_model_specs(args)
 
-    train_cases = discover_case_dirs(args.train_cases_root, args.target_annotation)
+    train_cases = (
+        {}
+        if args.inference_only
+        else discover_case_dirs(args.train_cases_root, args.target_annotation)
+    )
     val_cases = (
         {}
         if args.train_only
         else discover_case_dirs(args.val_cases_root, args.target_annotation)
     )
+    if args.inference_only and not val_cases:
+        raise RuntimeError(
+            f"No inference cases containing {args.target_annotation} were found "
+            f"under {args.val_cases_root}."
+        )
 
     print(f"Number of discovered training cases: {len(train_cases)}")
     print(f"Number of discovered validation cases: {len(val_cases)}")
+    configuration_root = (
+        args.val_prediction_root if args.inference_only else args.train_prediction_root
+    )
     print("Model configuration in feature order:")
     for spec in specs:
         confidence_description = (
-            str(resolve_path(spec.confidence_dir, args.train_prediction_root))
+            str(resolve_path(spec.confidence_dir, configuration_root))
             if spec.confidence_dir is not None
             else "disabled"
         )
         validity_description = (
-            str(resolve_path(spec.validity_dir, args.train_prediction_root))
+            str(resolve_path(spec.validity_dir, configuration_root))
             if spec.validity_dir is not None
             else "disabled"
         )
         print(
-            f"  {spec.model_id}: dir={resolve_path(spec.model_dir, args.train_prediction_root)} "
+            f"  {spec.model_id}: dir={resolve_path(spec.model_dir, configuration_root)} "
             f"label_space={spec.label_space} confidence={confidence_description} "
             f"validity={validity_description}"
         )
     print(f"Confidence features enabled: {uses_confidence(specs)}")
     print(f"Validity gating enabled: {uses_validity(specs)}")
+
+    if args.inference_only:
+        classifier = load_model_for_inference(args.model_input, specs)
+        print(f"Loaded model for inference: {args.model_input}")
+        print(f"Inference output directory: {args.output_dir}")
+        print_feature_importances(classifier, specs)
+        run_validation_inference(
+            classifier,
+            val_cases,
+            args.val_prediction_root,
+            specs,
+            args,
+        )
+        return
 
     X, y, sample_counts, usable_training_cases, skipped_training_cases = collect_training_samples(
         train_cases,
