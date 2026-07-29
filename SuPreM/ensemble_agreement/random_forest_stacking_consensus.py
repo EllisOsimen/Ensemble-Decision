@@ -279,6 +279,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--predict-chunk-size", type=int, default=1_000_000)
     parser.add_argument("--skip-missing", action="store_true")
+    parser.add_argument(
+        "--train-only",
+        action="store_true",
+        help="Fit and save the random forest without running validation inference.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -1317,6 +1322,7 @@ def save_model_and_metadata(
         "usable_training_cases": usable_training_cases,
         "skipped_training_cases": skipped_training_cases,
         "discovered_validation_cases": val_cases_count,
+        "validation_inference_run": not args.train_only,
     }
     metadata_path = metadata_path_for_model(args.model_output)
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
@@ -1348,7 +1354,11 @@ def main() -> None:
     specs = resolve_model_specs(args)
 
     train_cases = discover_case_dirs(args.train_cases_root, args.target_annotation)
-    val_cases = discover_case_dirs(args.val_cases_root, args.target_annotation)
+    val_cases = (
+        {}
+        if args.train_only
+        else discover_case_dirs(args.val_cases_root, args.target_annotation)
+    )
 
     print(f"Number of discovered training cases: {len(train_cases)}")
     print(f"Number of discovered validation cases: {len(val_cases)}")
@@ -1404,16 +1414,20 @@ def main() -> None:
 
     print(f"Model output path: {args.model_output}")
     print(f"Metadata output path: {metadata_path}")
-    print(f"Validation output directory: {args.output_dir}")
+    if args.train_only:
+        print("Validation inference: skipped (--train-only)")
+    else:
+        print(f"Validation output directory: {args.output_dir}")
     print_feature_importances(classifier, specs)
 
-    run_validation_inference(
-        classifier,
-        val_cases,
-        args.val_prediction_root,
-        specs,
-        args,
-    )
+    if not args.train_only:
+        run_validation_inference(
+            classifier,
+            val_cases,
+            args.val_prediction_root,
+            specs,
+            args,
+        )
 
 
 if __name__ == "__main__":

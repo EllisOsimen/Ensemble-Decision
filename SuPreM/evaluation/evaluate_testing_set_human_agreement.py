@@ -15,6 +15,9 @@ testing_set case folders. It computes:
   - pairwise per-class Dice, NSD, and binary Cohen kappa
   - pairwise whole-label-map Cohen kappa and exact agreement
   - Fleiss kappa across all requested label sources
+
+Use ``--skip-fleiss`` for strictly pairwise runs, such as one ground-truth
+annotation compared with one prediction method.
 """
 
 from __future__ import annotations
@@ -184,6 +187,15 @@ def parse_args() -> argparse.Namespace:
         "--skip-nsd",
         action="store_true",
         help="Skip all NSD calculations and write NaN in NSD columns.",
+    )
+    parser.add_argument(
+        "--skip-fleiss",
+        action="store_true",
+        help=(
+            "Skip multi-rater Fleiss kappa calculations and do not write the "
+            "per-case Fleiss CSV. Pairwise binary and multiclass Cohen kappa "
+            "outputs are unaffected."
+        ),
     )
     parser.add_argument(
         "--allow-missing-predictions",
@@ -551,8 +563,8 @@ def summarize_pair_class_totals(totals) -> list[dict[str, object]]:
 
 def main() -> None:
     args = parse_args()
-    if len(args.annotations) < 2:
-        raise ValueError("Pass at least two annotation filenames.")
+    if len(args.annotations) < 1:
+        raise ValueError("Pass at least one annotation filename.")
 
     # Decide which cases are in this run before loading any large NIfTI arrays.
     case_dirs = case_directories(args.cases_root)
@@ -564,6 +576,11 @@ def main() -> None:
         sources.append(LabelSource(name, files, label_space))
         prediction_source_info.append(
             {"name": name, "directory": str(directory), "label_space": label_space}
+        )
+    if len(sources) < 2:
+        raise ValueError(
+            "Pairwise evaluation requires at least two total label sources, "
+            "for example one annotation and one --prediction-dir."
         )
     source_names = [source.name for source in sources]
     if len(source_names) != len(set(source_names)):
@@ -650,6 +667,7 @@ def main() -> None:
         handle.write(f"ignore_affine={args.ignore_affine}\n")
         handle.write(f"include_background_nsd={args.include_background_nsd}\n")
         handle.write(f"skip_nsd={args.skip_nsd}\n")
+        handle.write(f"skip_fleiss={args.skip_fleiss}\n")
         handle.write(
             f"allow_missing_predictions={args.allow_missing_predictions}\n"
         )
@@ -743,23 +761,24 @@ def main() -> None:
                 if not math.isnan(kappa):
                     item["binary_kappa"].append(kappa)
 
-        # Fleiss kappa evaluates all requested sources together. If a prediction
-        # directory is provided, the prediction is intentionally included as an
-        # extra rater to mirror the pairwise tables.
-        annotations = [masks_by_name[source.name] for source in sources]
-        case_fleiss = {
-            "case": case_name,
-            "fleiss_kappa": fleiss_kappa(annotations, sorted(TARGET_LABELS)),
-            "foreground_fleiss_kappa": fleiss_kappa(
-                annotations,
-                sorted(TARGET_LABELS),
-                foreground_union_only=True,
-            ),
-        }
-        fleiss_rows.append(case_fleiss)
-        for key in ["fleiss_kappa", "foreground_fleiss_kappa"]:
-            if not math.isnan(case_fleiss[key]):
-                fleiss_totals[key].append(case_fleiss[key])
+        if not args.skip_fleiss:
+            # Fleiss kappa evaluates all requested sources together. If a
+            # prediction directory is provided, the prediction is intentionally
+            # included as an extra rater to mirror the pairwise tables.
+            annotations = [masks_by_name[source.name] for source in sources]
+            case_fleiss = {
+                "case": case_name,
+                "fleiss_kappa": fleiss_kappa(annotations, sorted(TARGET_LABELS)),
+                "foreground_fleiss_kappa": fleiss_kappa(
+                    annotations,
+                    sorted(TARGET_LABELS),
+                    foreground_union_only=True,
+                ),
+            }
+            fleiss_rows.append(case_fleiss)
+            for key in ["fleiss_kappa", "foreground_fleiss_kappa"]:
+                if not math.isnan(case_fleiss[key]):
+                    fleiss_totals[key].append(case_fleiss[key])
 
     # Build the run-level summary tables after all cases have contributed rows.
     pair_summary_rows = summarize_pair_class_totals(pair_totals)
@@ -790,17 +809,27 @@ def main() -> None:
         "evaluated_cases": case_names,
         "allow_missing_predictions": args.allow_missing_predictions,
         "nsd_tolerance_mm": args.nsd_tolerance_mm,
-        "mean_case_fleiss_kappa": (
-            float(np.mean(fleiss_totals["fleiss_kappa"])) if fleiss_totals["fleiss_kappa"] else math.nan
-        ),
-        "mean_case_foreground_fleiss_kappa": (
-            float(np.mean(fleiss_totals["foreground_fleiss_kappa"]))
-            if fleiss_totals["foreground_fleiss_kappa"]
-            else math.nan
-        ),
-        "cases_with_fleiss_kappa": len(fleiss_totals["fleiss_kappa"]),
-        "cases_with_foreground_fleiss_kappa": len(fleiss_totals["foreground_fleiss_kappa"]),
+        "fleiss_skipped": args.skip_fleiss,
     }
+    if not args.skip_fleiss:
+        overall.update(
+            {
+                "mean_case_fleiss_kappa": (
+                    float(np.mean(fleiss_totals["fleiss_kappa"]))
+                    if fleiss_totals["fleiss_kappa"]
+                    else math.nan
+                ),
+                "mean_case_foreground_fleiss_kappa": (
+                    float(np.mean(fleiss_totals["foreground_fleiss_kappa"]))
+                    if fleiss_totals["foreground_fleiss_kappa"]
+                    else math.nan
+                ),
+                "cases_with_fleiss_kappa": len(fleiss_totals["fleiss_kappa"]),
+                "cases_with_foreground_fleiss_kappa": len(
+                    fleiss_totals["foreground_fleiss_kappa"]
+                ),
+            }
+        )
 
     write_csv(
         args.output_dir / "per_case_pair_per_class.csv",
@@ -869,11 +898,12 @@ def main() -> None:
             "cases_with_foreground_exact_agreement",
         ],
     )
-    write_csv(
-        args.output_dir / "per_case_fleiss_kappa.csv",
-        fleiss_rows,
-        ["case", "fleiss_kappa", "foreground_fleiss_kappa"],
-    )
+    if not args.skip_fleiss:
+        write_csv(
+            args.output_dir / "per_case_fleiss_kappa.csv",
+            fleiss_rows,
+            ["case", "fleiss_kappa", "foreground_fleiss_kappa"],
+        )
     with (args.output_dir / "overall_summary.json").open("w") as handle:
         json.dump(overall, handle, indent=2)
 

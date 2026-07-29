@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=curvas-infer-conf
 #SBATCH --partition=Teaching
-#SBATCH --nodelist=saxa
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
