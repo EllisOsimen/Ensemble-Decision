@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Audit overlapping CLIP WORD predictions without writing segmentation masks."""
+"""Audit overlapping CLIP WORD predictions without writing segmentation masks. Due to CLIP
+    using Sidmoid, some predictions might overlap, this measures that.
+"""
 
 from __future__ import annotations
 
