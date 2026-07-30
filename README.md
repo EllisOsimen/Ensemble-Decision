@@ -191,6 +191,26 @@ per case. Confidence values are stored as scaled `uint8`; validity maps are
 binary and identify voxels evaluated by every base model. Do not mix case IDs,
 NIfTI grids, or affine transforms between these directories.
 
+### Tested software environment
+
+The reported experiments were run with:
+
+- Python 3.10.20
+- PyTorch 2.11.0+cu128
+- CUDA 12.8 PyTorch build
+- cuDNN 9.19.0
+- MONAI 1.5.2
+- NumPy 2.2.6
+- NiBabel 5.4.2
+- SciPy 1.15.3
+- scikit-learn 1.7.2
+
+Create the environment with:
+
+```bash
+conda env create --name suprem-h200 --file environment.yml
+conda activate ensemble-decision
+
 ## Reproduce The Experiment
 
 The Slurm scripts assume a GPU-capable environment named `suprem-h200`; create
@@ -324,3 +344,17 @@ The CURVAS evaluators write the canonical 65-case per-case CSVs and aggregate
 files. The summary command does not rerun inference or evaluation: it removes
 `UKCHLL082` from the per-case CSVs and recalculates the reported 64-case means
 and standard deviations under `SuPreM/results/results_64_testing_set/`.
+
+## Project Provenance
+
+This repository builds on the upstream SuPreM implementation. The CURVAS
+experiment-specific workflow is primarily contained in:
+
+- `SuPreM/inference/`
+- `SuPreM/ensemble_agreement/`
+- `SuPreM/evaluation/`
+- `SuPreM/statistics/`
+- `SuPreM/sbatch/`
+
+The remaining `SuPreM/` directories retain upstream training, backbone,
+documentation, and target-application code.
