@@ -23,14 +23,14 @@ set -euo pipefail
 #
 # Submit with defaults:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/evaluate_external_dataset_base_models.sbatch
+#   sbatch sbatch/totalsegmentator/evaluate_external_dataset_base_models.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/evaluate_external_dataset_base_models.sbatch \
+#   sbatch sbatch/totalsegmentator/evaluate_external_dataset_base_models.sbatch \
 #     [PREDICTION_ROOT] [CASES_ROOT] [OUTPUT_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 PREDICTION_ROOT="${1:-${PROJECT_DIR}/results/external_dataset_inference_with_confidence}"
 CASES_ROOT="${2:-${REPO_DIR}/external_dataset}"

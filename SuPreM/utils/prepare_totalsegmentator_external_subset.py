@@ -36,7 +36,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def read_case_list(path: Path) -> list[str]:
-    cases = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    cases = [
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
     if len(cases) != len(set(cases)):
         raise ValueError(f"Duplicate case IDs in {path}")
     if not cases:

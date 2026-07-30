@@ -24,18 +24,18 @@ set -euo pipefail
 #
 # Submit with defaults:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/infer_external_dataset_three_models_with_confidence.sbatch
+#   sbatch sbatch/totalsegmentator/infer_external_dataset_three_models_with_confidence.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/infer_external_dataset_three_models_with_confidence.sbatch \
+#   sbatch sbatch/totalsegmentator/infer_external_dataset_three_models_with_confidence.sbatch \
 #     [INPUT_ROOT] [OUTPUT_DIR]
 #
 # Rerun and replace every output:
 #   sbatch --export=ALL,OVERWRITE=1 \
-#     sbatch/infer_external_dataset_three_models_with_confidence.sbatch
+#     sbatch/totalsegmentator/infer_external_dataset_three_models_with_confidence.sbatch
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 INPUT_ROOT="${1:-${REPO_DIR}/external_dataset}"
 OUTPUT_DIR="${2:-${PROJECT_DIR}/results/external_dataset_inference_with_confidence}"

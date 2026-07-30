@@ -11,6 +11,7 @@
 
 set -euo pipefail
 
+# Legacy diagnostic retained for provenance; not part of reproduction.
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
 OUTPUT_JSON="${1:-results/clip_overlap_audit/representative_10_cases.json}"
 

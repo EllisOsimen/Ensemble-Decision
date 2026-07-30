@@ -111,7 +111,10 @@ Ensemble-Decision/
 │   ├── inference/                      # the three base-model inference scripts
 │   ├── pretrained_weights/             # model checkpoints (not versioned)
 │   ├── results/                        # generated inference/fusion/evaluation outputs
-│   ├── sbatch/                         # reproducible Slurm entry points
+│   ├── sbatch/
+│   │   ├── curvas/                     # active CURVAS pipeline
+│   │   ├── totalsegmentator/           # active external-evaluation pipeline
+│   │   └── legacy/                     # superseded and diagnostic jobs
 │   ├── utils/                          # dataset preparation utilities
 │   └── requirements.txt
 ├── training_set/
@@ -232,7 +235,7 @@ mkdir -p slurm_logs
 
    ```bash
    curvas_infer_job=$(sbatch --parsable \
-     sbatch/infer_all_curvas_three_models_with_confidence.sbatch)
+     sbatch/curvas/infer_all_curvas_three_models_with_confidence.sbatch)
    ```
 
 2. Generate the unweighted, weighted, and STAPLE consensus masks for all 65
@@ -241,7 +244,7 @@ mkdir -p slurm_logs
    ```bash
    curvas_fusion_job=$(sbatch --parsable \
      --dependency=afterok:${curvas_infer_job} \
-     sbatch/fuse_curvas_three_methods.sbatch)
+     sbatch/curvas/fuse_curvas_three_methods.sbatch)
    ```
 
 3. Reproduce the patient-level five-fold random-forest selection, fit the
@@ -251,15 +254,15 @@ mkdir -p slurm_logs
    ```bash
    rf_cv_job=$(sbatch --parsable \
      --dependency=afterok:${curvas_infer_job} \
-     sbatch/random_forest_cross_validation.sbatch)
+     sbatch/curvas/random_forest_cross_validation.sbatch)
 
    rf_train_job=$(sbatch --parsable \
      --dependency=afterok:${rf_cv_job} \
-     sbatch/train_final_random_forest_config_002.sbatch)
+     sbatch/curvas/train_final_random_forest_config_002.sbatch)
 
    curvas_rf_job=$(sbatch --parsable \
      --dependency=afterok:${rf_train_job} \
-     sbatch/infer_curvas_random_forest.sbatch)
+     sbatch/curvas/infer_curvas_random_forest.sbatch)
    ```
 
    Five-fold CV operates at patient level; no patient's voxels appear in both
@@ -272,15 +275,15 @@ mkdir -p slurm_logs
 
    ```bash
    curvas_human_eval_job=$(sbatch --parsable \
-     sbatch/evaluate_testing_set_human_agreement_all_65.sbatch)
+     sbatch/curvas/evaluate_testing_set_human_agreement_all_65.sbatch)
 
    curvas_base_eval_job=$(sbatch --parsable \
      --dependency=afterok:${curvas_infer_job} \
-     sbatch/evaluate_base_models_human_annotators.sbatch)
+     sbatch/curvas/evaluate_base_models_human_annotators.sbatch)
 
    curvas_eval_job=$(sbatch --parsable \
      --dependency=afterok:${curvas_fusion_job}:${curvas_rf_job} \
-     sbatch/evaluate_curvas_consensus_methods.sbatch)
+     sbatch/curvas/evaluate_curvas_consensus_methods.sbatch)
    ```
 
 5. After evaluation finishes, regenerate the final 64-case tables by excluding
@@ -294,8 +297,8 @@ mkdir -p slurm_logs
 ### TotalSegmentator External Evaluation
 
 The external experiment uses the fixed 50 case IDs recorded in
-`sbatch/totalsegmentator_external_50.txt`. The preparation job symlinks their
-CTs and source segmentations into `external_dataset/` and creates
+`sbatch/totalsegmentator/totalsegmentator_external_50.txt`. The preparation
+job symlinks their CTs and source segmentations into `external_dataset/` and creates
 `combined_mask.nii.gz` in the CURVAS label space. It does not modify the
 downloaded TotalSegmentator dataset.
 
@@ -303,7 +306,7 @@ downloaded TotalSegmentator dataset.
 
    ```bash
    totalseg_prepare_job=$(sbatch --parsable \
-     sbatch/prepare_totalsegmentator_external_50.sbatch)
+     sbatch/totalsegmentator/prepare_totalsegmentator_external_50.sbatch)
    ```
 
 2. Run all three base models on the 50 CTs:
@@ -311,7 +314,7 @@ downloaded TotalSegmentator dataset.
    ```bash
    totalseg_infer_job=$(sbatch --parsable \
      --dependency=afterok:${totalseg_prepare_job} \
-     sbatch/infer_external_dataset_three_models_with_confidence.sbatch)
+     sbatch/totalsegmentator/infer_external_dataset_three_models_with_confidence.sbatch)
    ```
 
 3. Generate the three deterministic consensus masks and apply the CURVAS-fitted
@@ -320,11 +323,11 @@ downloaded TotalSegmentator dataset.
    ```bash
    totalseg_fusion_job=$(sbatch --parsable \
      --dependency=afterok:${totalseg_infer_job} \
-     sbatch/fuse_external_dataset_three_methods.sbatch)
+     sbatch/totalsegmentator/fuse_external_dataset_three_methods.sbatch)
 
    totalseg_rf_job=$(sbatch --parsable \
      --dependency=afterok:${totalseg_infer_job}:${rf_train_job} \
-     sbatch/infer_external_dataset_random_forest.sbatch)
+     sbatch/totalsegmentator/infer_external_dataset_random_forest.sbatch)
    ```
 
 4. Evaluate the three base models and all four consensus methods against the
@@ -333,11 +336,11 @@ downloaded TotalSegmentator dataset.
    ```bash
    totalseg_base_eval_job=$(sbatch --parsable \
      --dependency=afterok:${totalseg_infer_job} \
-     sbatch/evaluate_external_dataset_base_models.sbatch)
+     sbatch/totalsegmentator/evaluate_external_dataset_base_models.sbatch)
 
    totalseg_eval_job=$(sbatch --parsable \
      --dependency=afterok:${totalseg_fusion_job}:${totalseg_rf_job} \
-     sbatch/evaluate_external_dataset_consensus_all_methods.sbatch)
+     sbatch/totalsegmentator/evaluate_external_dataset_consensus_all_methods.sbatch)
    ```
 
 The CURVAS evaluators write the canonical 65-case per-case CSVs and aggregate
@@ -356,5 +359,4 @@ experiment-specific workflow is primarily contained in:
 - `SuPreM/statistics/`
 - `SuPreM/sbatch/`
 
-The remaining `SuPreM/` directories retain upstream training, backbone,
-documentation, and target-application code.
+The remaining `SuPreM/` directories retain code from the SuPreM repository

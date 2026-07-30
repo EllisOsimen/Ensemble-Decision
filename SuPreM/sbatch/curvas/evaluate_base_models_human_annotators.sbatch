@@ -17,7 +17,7 @@ set -euo pipefail
 # Fleiss' kappa (three experts plus one base model).
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 CASES_ROOT="${1:-${REPO_DIR}/testing_set}"
 PREDICTION_ROOT="${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/testing"

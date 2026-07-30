@@ -14,11 +14,11 @@ set -euo pipefail
 #   0=unweighted, 1=weighted, 2=STAPLE, 3=random forest.
 #
 # Optional arguments:
-#   sbatch sbatch/evaluate_curvas_consensus_methods.sbatch \
+#   sbatch sbatch/curvas/evaluate_curvas_consensus_methods.sbatch \
 #     [CURVAS_RESULT_ROOT] [TEST_CASES_ROOT] [OUTPUT_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 CURVAS_ROOT="${1:-${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence}"
 CASES_ROOT="${2:-${REPO_DIR}/testing_set}"

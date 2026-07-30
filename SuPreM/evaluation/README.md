@@ -148,7 +148,7 @@ as the comparison.
 The three base models can be evaluated against all experts with:
 
 ```bash
-sbatch SuPreM/sbatch/evaluate_base_models_human_annotators.sbatch
+sbatch SuPreM/sbatch/curvas/evaluate_base_models_human_annotators.sbatch
 ```
 
 Each array task writes one model's results under

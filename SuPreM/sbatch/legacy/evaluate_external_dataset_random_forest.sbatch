@@ -21,10 +21,10 @@ set -euo pipefail
 #
 # Submit with defaults:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/evaluate_external_dataset_random_forest.sbatch
+#   sbatch sbatch/legacy/evaluate_external_dataset_random_forest.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/evaluate_external_dataset_random_forest.sbatch \
+#   sbatch sbatch/legacy/evaluate_external_dataset_random_forest.sbatch \
 #     [RF_OUTPUT_ROOT] [CASES_ROOT] [EVALUATION_OUTPUT_DIR]
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"

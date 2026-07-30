@@ -17,22 +17,22 @@ set -euo pipefail
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+#   sbatch sbatch/curvas/infer_all_curvas_three_models_with_confidence.sbatch
 #
 # Run selected array tasks only (command-line --array overrides the directive):
-#   sbatch --array=7 sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+#   sbatch --array=7 sbatch/curvas/infer_all_curvas_three_models_with_confidence.sbatch
 #
 # Rerun CLIP and SegResNet with the current maximum-score overlap rule while
 # reusing the unchanged Swin outputs:
 #   sbatch --export=ALL,RERUN_SIGMOID=1 \
-#     sbatch/infer_all_curvas_three_models_with_confidence.sbatch
+#     sbatch/curvas/infer_all_curvas_three_models_with_confidence.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch \
+#   sbatch sbatch/curvas/infer_all_curvas_three_models_with_confidence.sbatch \
 #     [OUTPUT_DIR] [TRAIN_ROOT] [VAL_ROOT] [TEST_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 OUTPUT_DIR="${1:-results/all_datasets_curvas_inference_with_confidence}"
 TRAIN_ROOT="${2:-${REPO_DIR}/training_set/training_set}"

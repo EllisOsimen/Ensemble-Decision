@@ -14,11 +14,11 @@ set -euo pipefail
 # Run after train_final_random_forest_config_002.sbatch completes.
 #
 # Optional arguments:
-#   sbatch sbatch/infer_curvas_random_forest.sbatch \
+#   sbatch sbatch/curvas/infer_curvas_random_forest.sbatch \
 #     [TEST_PREDICTION_ROOT] [TEST_CASES_ROOT] [MODEL_INPUT] [OUTPUT_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 CURVAS_ROOT="${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence"
 PREDICTION_ROOT="${1:-${CURVAS_ROOT}/testing}"

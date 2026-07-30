@@ -15,10 +15,10 @@ set -euo pipefail
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/random_forest_stacking_consensus.sbatch
+#   sbatch sbatch/legacy/random_forest_stacking_consensus.sbatch
 #
 # Optional arguments:
-#   sbatch sbatch/random_forest_stacking_consensus.sbatch \
+#   sbatch sbatch/legacy/random_forest_stacking_consensus.sbatch \
 #     [TRAIN_PREDICTION_ROOT] [TRAIN_CASES_ROOT] [VAL_PREDICTION_ROOT] \
 #     [VAL_CASES_ROOT] [MODEL_OUTPUT] [OUTPUT_DIR] [EXTRA_ARGS...]
 #

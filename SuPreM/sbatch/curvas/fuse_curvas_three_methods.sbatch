@@ -14,14 +14,14 @@ set -euo pipefail
 # Run after infer_all_curvas_three_models_with_confidence.sbatch completes.
 #
 # Run from SuPreM/:
-#   sbatch sbatch/fuse_curvas_three_methods.sbatch
+#   sbatch sbatch/curvas/fuse_curvas_three_methods.sbatch
 #
 # Optional arguments:
-#   sbatch sbatch/fuse_curvas_three_methods.sbatch \
+#   sbatch sbatch/curvas/fuse_curvas_three_methods.sbatch \
 #     [TEST_PREDICTION_ROOT] [OUTPUT_ROOT] [TEST_CASES_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 PREDICTION_ROOT="${1:-${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/testing}"
 OUTPUT_ROOT="${2:-${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/consensus_testing}"

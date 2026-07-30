@@ -18,18 +18,18 @@ set -euo pipefail
 #
 # Submit with defaults:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/infer_external_dataset_random_forest.sbatch
+#   sbatch sbatch/totalsegmentator/infer_external_dataset_random_forest.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/infer_external_dataset_random_forest.sbatch \
+#   sbatch sbatch/totalsegmentator/infer_external_dataset_random_forest.sbatch \
 #     [PREDICTION_ROOT] [CASES_ROOT] [MODEL_INPUT] [OUTPUT_ROOT]
 #
 # Rerun and replace both outputs for every selected case:
 #   sbatch --export=ALL,OVERWRITE=1 \
-#     sbatch/infer_external_dataset_random_forest.sbatch
+#     sbatch/totalsegmentator/infer_external_dataset_random_forest.sbatch
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 PREDICTION_ROOT="${1:-${PROJECT_DIR}/results/external_dataset_inference_with_confidence}"
 CASES_ROOT="${2:-${REPO_DIR}/external_dataset}"

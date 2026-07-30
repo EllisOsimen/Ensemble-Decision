@@ -14,14 +14,14 @@ set -euo pipefail
 # dataset; combined_mask.nii.gz is generated in CURVAS label space.
 #
 # Run from SuPreM/:
-#   sbatch sbatch/prepare_totalsegmentator_external_50.sbatch
+#   sbatch sbatch/totalsegmentator/prepare_totalsegmentator_external_50.sbatch
 #
 # Optional arguments:
-#   sbatch sbatch/prepare_totalsegmentator_external_50.sbatch \
+#   sbatch sbatch/totalsegmentator/prepare_totalsegmentator_external_50.sbatch \
 #     [TOTALSEGMENTATOR_ROOT] [OUTPUT_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 SOURCE_ROOT="${1:-${REPO_DIR}/Totalsegmentator_dataset}"
 OUTPUT_ROOT="${2:-${REPO_DIR}/external_dataset}"

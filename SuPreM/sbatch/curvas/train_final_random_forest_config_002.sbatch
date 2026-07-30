@@ -27,18 +27,18 @@ set -euo pipefail
 #
 # Submit after all 20 training cases have complete inference outputs:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/train_final_random_forest_config_002.sbatch
+#   sbatch sbatch/curvas/train_final_random_forest_config_002.sbatch
 #
 # To intentionally replace an existing final model:
 #   sbatch --export=ALL,OVERWRITE=1 \
-#     sbatch/train_final_random_forest_config_002.sbatch
+#     sbatch/curvas/train_final_random_forest_config_002.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/train_final_random_forest_config_002.sbatch \
+#   sbatch sbatch/curvas/train_final_random_forest_config_002.sbatch \
 #     [TRAIN_PREDICTION_ROOT] [TRAIN_CASES_ROOT] [MODEL_OUTPUT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 TRAIN_PREDICTION_ROOT="${1:-${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/training}"
 TRAIN_CASES_ROOT="${2:-${REPO_DIR}/training_set/training_set}"

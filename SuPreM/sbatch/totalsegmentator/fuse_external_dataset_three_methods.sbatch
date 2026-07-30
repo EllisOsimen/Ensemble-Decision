@@ -17,18 +17,18 @@ set -euo pipefail
 #
 # Submit with defaults:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/fuse_external_dataset_three_methods.sbatch
+#   sbatch sbatch/totalsegmentator/fuse_external_dataset_three_methods.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/fuse_external_dataset_three_methods.sbatch \
+#   sbatch sbatch/totalsegmentator/fuse_external_dataset_three_methods.sbatch \
 #     [PREDICTION_ROOT] [OUTPUT_ROOT] [EXTERNAL_DATASET_ROOT]
 #
 # Rerun and replace all three methods for every selected case:
 #   sbatch --export=ALL,OVERWRITE=1 \
-#     sbatch/fuse_external_dataset_three_methods.sbatch
+#     sbatch/totalsegmentator/fuse_external_dataset_three_methods.sbatch
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 PREDICTION_ROOT="${1:-${PROJECT_DIR}/results/external_dataset_inference_with_confidence}"
 OUTPUT_ROOT="${2:-${PROJECT_DIR}/results/external_dataset_consensus}"

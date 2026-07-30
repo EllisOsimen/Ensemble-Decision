@@ -14,7 +14,7 @@ set -euo pipefail
 # contains human-only, three-rater Fleiss' kappa across all 65 cases.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 CASES_ROOT="${1:-${REPO_DIR}/testing_set}"
 OUTPUT_DIR="${PROJECT_DIR}/results/results_65_testing_set/human_annotator_evaluation"

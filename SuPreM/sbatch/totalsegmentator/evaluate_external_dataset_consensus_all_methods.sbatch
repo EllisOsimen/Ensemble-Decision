@@ -15,11 +15,11 @@ set -euo pipefail
 # Fleiss kappa is disabled because TotalSegmentator provides one reference.
 #
 # Optional arguments:
-#   sbatch sbatch/evaluate_external_dataset_consensus_all_methods.sbatch \
+#   sbatch sbatch/totalsegmentator/evaluate_external_dataset_consensus_all_methods.sbatch \
 #     [CONSENSUS_ROOT] [RF_ROOT] [CASES_ROOT] [OUTPUT_ROOT]
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 CONSENSUS_ROOT="${1:-${PROJECT_DIR}/results/external_dataset_consensus}"
 RF_ROOT="${2:-${PROJECT_DIR}/results/external_dataset_random_forest_config_002}"

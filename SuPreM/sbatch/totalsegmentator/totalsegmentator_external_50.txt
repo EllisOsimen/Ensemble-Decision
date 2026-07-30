@@ -1,3 +1,4 @@
+# Fixed 50-case TotalSegmentator external-evaluation cohort.
 s0001
 s0004
 s0006

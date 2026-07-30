@@ -16,14 +16,14 @@ set -euo pipefail
 #
 # Default usage:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/random_forest_cross_validation.sbatch
+#   sbatch sbatch/curvas/random_forest_cross_validation.sbatch
 #
 # Optional arguments:
-#   sbatch sbatch/random_forest_cross_validation.sbatch \
+#   sbatch sbatch/curvas/random_forest_cross_validation.sbatch \
 #     [TRAIN_PREDICTION_ROOT] [TRAIN_CASES_ROOT] [OUTPUT_DIR] [EXTRA_ARGS...]
 #
 # Example smaller smoke run:
-#   sbatch sbatch/random_forest_cross_validation.sbatch \
+#   sbatch sbatch/curvas/random_forest_cross_validation.sbatch \
 #     results/all_curvas_inference_with_confidence/training \
 #     /home/s2347484/Seg/training_set/training_set \
 #     results/all_curvas_inference_with_confidence/random_forest_cross_validation_smoke \
@@ -31,7 +31,7 @@ set -euo pipefail
 #     --min-samples-leaf-grid 1 --max-features-grid sqrt
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 TRAIN_PREDICTION_ROOT="${1:-results/all_datasets_curvas_inference_with_confidence/training}"
 TRAIN_CASES_ROOT="${2:-${REPO_DIR}/training_set/training_set}"

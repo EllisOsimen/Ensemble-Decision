@@ -16,10 +16,10 @@ set -euo pipefail
 #
 # Usage:
 #   cd /home/s2347484/Seg/SuPreM
-#   sbatch sbatch/backfill_curvas_validity_masks.sbatch
+#   sbatch sbatch/legacy/backfill_curvas_validity_masks.sbatch
 #
 # Optional positional arguments:
-#   sbatch sbatch/backfill_curvas_validity_masks.sbatch \
+#   sbatch sbatch/legacy/backfill_curvas_validity_masks.sbatch \
 #     [OUTPUT_DIR] [TRAIN_ROOT] [VAL_ROOT] [TEST_ROOT]
 
 PROJECT_DIR="/home/s2347484/Seg/SuPreM"
