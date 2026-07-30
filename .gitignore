@@ -15,6 +15,8 @@
 !SuPreM/sbatch/backfill_curvas_validity_masks.sbatch
 !SuPreM/sbatch/evaluate_testing_set_human_agreement_all_65.sbatch
 !SuPreM/sbatch/evaluate_base_models_human_annotators.sbatch
+!SuPreM/sbatch/infer_external_dataset_random_forest.sbatch
+!SuPreM/sbatch/evaluate_external_dataset_random_forest.sbatch
 *.log
 *.err
 *.out
