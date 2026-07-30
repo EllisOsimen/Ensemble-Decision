@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=256G
 #SBATCH --time=2-00:00:00
-#SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.out
-#SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.err
+#SBATCH --output=slurm_logs/%x-%j.out
+#SBATCH --error=slurm_logs/%x-%j.err
 
 set -euo pipefail
 
@@ -30,10 +30,12 @@ set -euo pipefail
 #     --n-estimators-grid 10 --max-depth-grid 5 \
 #     --min-samples-leaf-grid 1 --max-features-grid sqrt
 
-PROJECT_DIR="/home/s2347484/Seg/SuPreM"
-TRAIN_PREDICTION_ROOT="${1:-results/all_curvas_inference_with_confidence/training}"
-TRAIN_CASES_ROOT="${2:-/home/s2347484/Seg/training_set/training_set}"
-OUTPUT_DIR="${3:-results/all_curvas_inference_with_confidence/random_forest_cross_validation_with_confidence}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
+TRAIN_PREDICTION_ROOT="${1:-results/all_datasets_curvas_inference_with_confidence/training}"
+TRAIN_CASES_ROOT="${2:-${REPO_DIR}/training_set/training_set}"
+OUTPUT_DIR="${3:-results/all_datasets_curvas_inference_with_confidence/random_forest_cv_confidence_validity_fixed}"
 
 for _ in 1 2 3; do
     if (( $# > 0 )); then
@@ -65,7 +67,7 @@ for REQUIRED_DIR in "${TRAIN_PREDICTION_ROOT}" "${TRAIN_CASES_ROOT}"; do
 done
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate suprem-h200
+conda activate "${CONDA_ENV:-suprem-h200}"
 cd "${PROJECT_DIR}"
 
 python -c "import joblib, nibabel, numpy, scipy, sklearn, tqdm" || {

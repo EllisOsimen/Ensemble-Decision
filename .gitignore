@@ -17,6 +17,14 @@
 !SuPreM/sbatch/evaluate_base_models_human_annotators.sbatch
 !SuPreM/sbatch/infer_external_dataset_random_forest.sbatch
 !SuPreM/sbatch/evaluate_external_dataset_random_forest.sbatch
+!SuPreM/sbatch/prepare_totalsegmentator_external_50.sbatch
+!SuPreM/sbatch/fuse_curvas_three_methods.sbatch
+!SuPreM/sbatch/fuse_external_dataset_three_methods.sbatch
+!SuPreM/sbatch/train_final_random_forest_config_002.sbatch
+!SuPreM/sbatch/infer_curvas_random_forest.sbatch
+!SuPreM/sbatch/evaluate_curvas_consensus_methods.sbatch
+!SuPreM/sbatch/evaluate_external_dataset_consensus_all_methods.sbatch
+!SuPreM/sbatch/evaluate_external_dataset_base_models.sbatch
 *.log
 *.err
 *.out
@@ -26,5 +34,7 @@ WORD/
 .agents/
 3Dircadb1/
 Dataset/
+downloads/
+external_dataset/
 SuPreM/tmp/
 Totalsegmentator_dataset

@@ -10,9 +10,9 @@ mapped to the common CURVAS label space: `0` background, `1` pancreas,
 | Method | How it was run |
 | --- | --- |
 | Unweighted | `consensus_agreement_mask.py` in its default `legacy` mode (no `--consensus-mode` argument). It used the original majority/local-agreement rule and CLIP U-Net as the fallback for unresolved voxels. |
-| Weighted | `consensus_agreement_mask.py --consensus-mode weighted`, launched by `sbatch/run_testing_weighted_consensus.sbatch`. Organ-specific model weights came from mean patient-level Dice on the 20 training cases against `annotation_1.nii.gz`; the weak and strong thresholds are frozen in the batch script. |
+| Weighted | `consensus_agreement_mask.py --consensus-mode weighted`, launched with the other deterministic methods by `sbatch/fuse_curvas_three_methods.sbatch`. Organ-specific model weights came from mean patient-level Dice on the 20 training cases against `annotation_1.nii.gz`; the weak and strong thresholds are frozen in the batch script. |
 | STAPLE | `consensus_agreement_mask.py --consensus-mode staple`. STAPLE was run independently for pancreas, kidney, and liver using the default probability threshold `0.5` and inter-organ margin `0.1`, after which the organ results were combined into one mask. |
-| Random forest | Hyperparameters were selected with `random_forest_cross_validation.py` using five-fold patient-level cross-validation on the 20 training cases. `random_forest_stacking_consensus.py` was then trained on all 20 cases and applied to all 65 testing cases through `sbatch/train_final_random_forest_config_002.sbatch`. |
+| Random forest | Hyperparameters were selected with `random_forest_cross_validation.py` using five-fold patient-level cross-validation on the 20 training cases. `sbatch/train_final_random_forest_config_002.sbatch` fits the final model to all 20 cases, and `sbatch/infer_curvas_random_forest.sbatch` applies it to all 65 testing cases. |
 
 The unweighted, weighted, and STAPLE methods therefore use the same core
 script with different fusion rules. The random forest is a supervised stacker
@@ -41,17 +41,13 @@ prediction.
 The masks used for the reported 65-case comparisons are retained under:
 
 ```text
-results/legacy/CURVAS_INFERENCE/agreement_masks_target/          # unweighted
 results/all_datasets_curvas_inference_with_confidence/
-  weighted_consensus_training_masks/testing/consensus_masks/     # weighted
-results/legacy/CURVAS_INFERENCE/agreement_masks_staple/          # STAPLE
-results/all_datasets_curvas_inference_with_confidence/
-  random_forest_config_002_final/testing_predictions/            # random forest
+├── consensus_testing/
+│   ├── unweighted/consensus_masks/
+│   ├── weighted/consensus_masks/
+│   └── staple/consensus_masks/
+└── random_forest_config_002_final/testing_predictions/
 ```
-
-Some saved run configurations contain the earlier directory name
-`all_curvas_inference_with_confidence`; these files were produced before that
-directory was renamed to `all_datasets_curvas_inference_with_confidence`.
 
 All four methods were compared with the three testing-set experts using
 `evaluation/evaluate_testing_set_human_agreement.py`. The final evaluation

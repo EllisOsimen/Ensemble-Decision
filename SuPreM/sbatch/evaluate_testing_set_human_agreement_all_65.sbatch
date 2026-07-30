@@ -4,8 +4,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
 #SBATCH --time=2-00:00:00
-#SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.out
-#SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%j.err
+#SBATCH --output=slurm_logs/%x-%j.out
+#SBATCH --error=slurm_logs/%x-%j.err
 
 set -euo pipefail
 
@@ -13,8 +13,10 @@ set -euo pipefail
 # No model prediction is included and no case is excluded, so overall_summary.json
 # contains human-only, three-rater Fleiss' kappa across all 65 cases.
 
-PROJECT_DIR="/home/s2347484/Seg/SuPreM"
-CASES_ROOT="/home/s2347484/Seg/testing_set"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
+CASES_ROOT="${1:-${REPO_DIR}/testing_set}"
 OUTPUT_DIR="${PROJECT_DIR}/results/results_65_testing_set/human_annotator_evaluation"
 
 if [[ ! -d "${CASES_ROOT}" ]]; then
@@ -40,7 +42,7 @@ done
 mkdir -p "${PROJECT_DIR}/slurm_logs" "${OUTPUT_DIR}"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate suprem-h200
+conda activate "${CONDA_ENV:-suprem-h200}"
 cd "${PROJECT_DIR}"
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"

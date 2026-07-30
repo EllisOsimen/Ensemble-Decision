@@ -7,12 +7,13 @@
 #SBATCH --mem=128G
 #SBATCH --time=2-00:00:00
 #SBATCH --array=0-49%4
-#SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.out
-#SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.err
+#SBATCH --output=slurm_logs/%x-%A_%a.out
+#SBATCH --error=slurm_logs/%x-%A_%a.err
 
 set -euo pipefail
 
-# Run the three established base models on the 50-case external dataset.
+# Run the three established base models on the prepared 50-case
+# TotalSegmentator external dataset.
 # Each array task processes one CT and runs the models sequentially on one GPU:
 #   1. CLIP Universal U-Net
 #   2. SuPreM SegResNet
@@ -33,8 +34,10 @@ set -euo pipefail
 #   sbatch --export=ALL,OVERWRITE=1 \
 #     sbatch/infer_external_dataset_three_models_with_confidence.sbatch
 
-PROJECT_DIR="/home/s2347484/Seg/SuPreM"
-INPUT_ROOT="${1:-/home/s2347484/Seg/external_dataset}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
+INPUT_ROOT="${1:-${REPO_DIR}/external_dataset}"
 OUTPUT_DIR="${2:-${PROJECT_DIR}/results/external_dataset_inference_with_confidence}"
 CHECKPOINT_DIR="${PROJECT_DIR}/pretrained_weights"
 OVERWRITE="${OVERWRITE:-0}"
@@ -133,7 +136,7 @@ fi
 mkdir -p "${PROJECT_DIR}/slurm_logs" "${OUTPUT_DIR}"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate suprem-h200
+conda activate "${CONDA_ENV:-suprem-h200}"
 cd "${PROJECT_DIR}"
 
 python -c "import nibabel, monai, numpy, torch" || {

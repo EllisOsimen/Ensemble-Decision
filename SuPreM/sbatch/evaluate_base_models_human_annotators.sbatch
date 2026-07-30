@@ -6,8 +6,8 @@
 #SBATCH --mem=128G
 #SBATCH --time=2-00:00:00
 #SBATCH --array=0-2
-#SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.out
-#SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.err
+#SBATCH --output=slurm_logs/%x-%A_%a.out
+#SBATCH --error=slurm_logs/%x-%A_%a.err
 
 set -euo pipefail
 
@@ -16,8 +16,10 @@ set -euo pipefail
 # during evaluation. Each task therefore computes a separate four-rater
 # Fleiss' kappa (three experts plus one base model).
 
-PROJECT_DIR="/home/s2347484/Seg/SuPreM"
-CASES_ROOT="/home/s2347484/Seg/testing_set"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
+CASES_ROOT="${1:-${REPO_DIR}/testing_set}"
 PREDICTION_ROOT="${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/testing"
 OUTPUT_ROOT="${PROJECT_DIR}/results/results_65_testing_set/base_model_human_annotator_evaluation"
 
@@ -69,7 +71,7 @@ done
 mkdir -p "${PROJECT_DIR}/slurm_logs" "${OUTPUT_DIR}"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate suprem-h200
+conda activate "${CONDA_ENV:-suprem-h200}"
 cd "${PROJECT_DIR}"
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"

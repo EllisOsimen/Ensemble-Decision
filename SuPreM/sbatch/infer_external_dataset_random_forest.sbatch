@@ -6,8 +6,8 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --array=0-49%6
-#SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.out
-#SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.err
+#SBATCH --output=slurm_logs/%x-%A_%a.out
+#SBATCH --error=slurm_logs/%x-%A_%a.err
 
 set -euo pipefail
 
@@ -28,10 +28,12 @@ set -euo pipefail
 #   sbatch --export=ALL,OVERWRITE=1 \
 #     sbatch/infer_external_dataset_random_forest.sbatch
 
-PROJECT_DIR="/home/s2347484/Seg/SuPreM"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
 PREDICTION_ROOT="${1:-${PROJECT_DIR}/results/external_dataset_inference_with_confidence}"
-CASES_ROOT="${2:-/home/s2347484/Seg/external_dataset}"
-MODEL_INPUT="${3:-${PROJECT_DIR}/results/all_curvas_inference_with_confidence/random_forest_config_002_final/rf_stacking_config_002.joblib}"
+CASES_ROOT="${2:-${REPO_DIR}/external_dataset}"
+MODEL_INPUT="${3:-${PROJECT_DIR}/results/all_datasets_curvas_inference_with_confidence/random_forest_config_002_final/rf_stacking_config_002.joblib}"
 OUTPUT_ROOT="${4:-${PROJECT_DIR}/results/external_dataset_random_forest_config_002}"
 OVERWRITE="${OVERWRITE:-0}"
 EXPECTED_CASES=50
@@ -145,7 +147,7 @@ fi
 mkdir -p "${PROJECT_DIR}/slurm_logs" "${OUTPUT_ROOT}"
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate suprem-h200
+conda activate "${CONDA_ENV:-suprem-h200}"
 cd "${PROJECT_DIR}"
 
 python -c "import joblib, nibabel, numpy, scipy, sklearn, tqdm" || {

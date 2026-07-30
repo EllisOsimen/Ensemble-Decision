@@ -6,8 +6,8 @@
 #SBATCH --mem=128G
 #SBATCH --time=2-00:00:00
 #SBATCH --array=0-89%4
-#SBATCH --output=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.out
-#SBATCH --error=/home/s2347484/Seg/SuPreM/slurm_logs/%x-%A_%a.err
+#SBATCH --output=slurm_logs/%x-%A_%a.out
+#SBATCH --error=slurm_logs/%x-%A_%a.err
 
 set -euo pipefail
 
@@ -31,11 +31,13 @@ set -euo pipefail
 #   sbatch sbatch/infer_all_curvas_three_models_with_confidence.sbatch \
 #     [OUTPUT_DIR] [TRAIN_ROOT] [VAL_ROOT] [TEST_ROOT]
 
-PROJECT_DIR="/home/s2347484/Seg/SuPreM"
-OUTPUT_DIR="${1:-results/all_curvas_inference_with_confidence}"
-TRAIN_ROOT="${2:-/home/s2347484/Seg/training_set/training_set}"
-VAL_ROOT="${3:-/home/s2347484/Seg/validation_set}"
-TEST_ROOT="${4:-/home/s2347484/Seg/testing_set}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd -- "${PROJECT_DIR}/.." && pwd)"
+OUTPUT_DIR="${1:-results/all_datasets_curvas_inference_with_confidence}"
+TRAIN_ROOT="${2:-${REPO_DIR}/training_set/training_set}"
+VAL_ROOT="${3:-${REPO_DIR}/validation_set}"
+TEST_ROOT="${4:-${REPO_DIR}/testing_set}"
 CHECKPOINT_DIR="${PROJECT_DIR}/pretrained_weights"
 RERUN_SIGMOID="${RERUN_SIGMOID:-0}"
 
@@ -161,7 +163,7 @@ if [[ "${RERUN_SIGMOID}" == "1" ]]; then
 fi
 
 source /opt/conda/etc/profile.d/conda.sh
-conda activate suprem-h200
+conda activate "${CONDA_ENV:-suprem-h200}"
 cd "${PROJECT_DIR}"
 
 python -c "import nibabel, monai, numpy, torch" || {
