@@ -1,3 +1,9 @@
+# Legacy upstream SuPreM dependencies.
+#
+# Do not install this file for the CURVAS or TotalSegmentator workflows
+# documented in the repository-level README. Use ../environment.yml instead;
+# this legacy list pins older, incompatible versions of PyTorch and MONAI.
+
 connected-components-3d
 h5py==3.6.0
 monai==0.9.0

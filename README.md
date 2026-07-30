@@ -212,19 +212,34 @@ Create the environment with:
 
 ```bash
 conda env create --name suprem-h200 --file environment.yml
-conda activate ensemble-decision
+conda activate suprem-h200
+```
+
+The environment name is defined in `environment.yml`. On a GPU compute node,
+verify the core dependencies and GPU availability after installation:
+
+```bash
+python -c "import torch, monai, nibabel, numpy, scipy, sklearn, surface_distance; print(f'PyTorch {torch.__version__}, MONAI {monai.__version__}, CUDA available: {torch.cuda.is_available()}')"
+```
+
+`CUDA available: False` is expected if this check is run on a login node that
+does not expose a GPU.
+
+`environment.yml` is the dependency source of truth for the experiments in
+this README. Do not additionally install `SuPreM/requirements.txt`: that file
+is retained for the legacy upstream SuPreM code and pins older, incompatible
+versions of PyTorch and MONAI.
 
 ## Reproduce The Experiment
 
 The Slurm scripts assume a GPU-capable environment named `suprem-h200`; create
-an equivalent environment with the dependencies below, then adapt the Slurm
+the environment above, then adapt the Slurm
 resource directives if your cluster differs. Set `CONDA_ENV` when the
 environment has another name. Submit all jobs from `SuPreM/` so Slurm can write
 to `slurm_logs/`.
 
 ```bash
 cd /path/to/Ensemble-Decision/SuPreM
-pip install -r requirements.txt
 mkdir -p slurm_logs
 ```
 
