@@ -32,6 +32,71 @@ All four methods covered the same 64 cases, with only `UKCHLL082` excluded.
 Results should be interpreted as agreement with the three human annotators,
 rather than as a single-reference segmentation score.
 
+## Download The Data And Pretrained Models
+
+Run the following commands from the repository root. The downloads are large:
+the compressed CURVAS dataset is approximately 29.4 GB in total and the
+compressed TotalSegmentator dataset is approximately 23.6 GB. The `--continue`
+option allows an interrupted download to be resumed.
+
+### CURVAS
+
+Download all three splits from the
+[CURVAS Zenodo record](https://zenodo.org/records/13767408):
+
+```bash
+mkdir -p downloads
+
+wget --continue --output-document downloads/training_set.zip \
+  "https://zenodo.org/records/13767408/files/training_set.zip?download=1"
+wget --continue --output-document downloads/validation_set.zip \
+  "https://zenodo.org/records/13767408/files/validation_set.zip?download=1"
+wget --continue --output-document downloads/testing_set.zip \
+  "https://zenodo.org/records/13767408/files/testing_set.zip?download=1"
+
+unzip downloads/training_set.zip -d .
+unzip downloads/validation_set.zip -d .
+unzip downloads/testing_set.zip -d .
+```
+
+This produces the `training_set/`, `validation_set/`, and `testing_set/`
+directories described below.
+
+### TotalSegmentator
+
+Download TotalSegmentator v2.0.1 from the
+[TotalSegmentator Zenodo record](https://zenodo.org/records/10047292):
+
+```bash
+mkdir -p downloads Totalsegmentator_dataset
+
+wget --continue \
+  --output-document downloads/Totalsegmentator_dataset_v201.zip \
+  "https://zenodo.org/records/10047292/files/Totalsegmentator_dataset_v201.zip?download=1"
+
+unzip downloads/Totalsegmentator_dataset_v201.zip \
+  -d Totalsegmentator_dataset
+```
+
+### Pretrained Models
+
+Download the three required checkpoints from the
+[SuPreM Hugging Face repository](https://huggingface.co/MrGiovanni/SuPreM/tree/main), and store them under SuPreM/pretrained_models:
+
+```bash
+mkdir -p SuPreM/pretrained_weights
+
+wget --continue \
+  --output-document SuPreM/pretrained_weights/supervised_clip_driven_universal_unet_2100.pth \
+  "https://huggingface.co/MrGiovanni/SuPreM/resolve/main/supervised_clip_driven_universal_unet_2100.pth?download=true"
+wget --continue \
+  --output-document SuPreM/pretrained_weights/supervised_suprem_segresnet_2100.pth \
+  "https://huggingface.co/MrGiovanni/SuPreM/resolve/main/supervised_suprem_segresnet_2100.pth?download=true"
+wget --continue \
+  --output-document SuPreM/pretrained_weights/self_supervised_nv_swin_unetr_5050.pt \
+  "https://huggingface.co/MrGiovanni/SuPreM/resolve/main/self_supervised_nv_swin_unetr_5050.pt?download=true"
+```
+
 ## Required Repository Layout
 
 The inference and Slurm scripts use this
@@ -47,6 +112,8 @@ Ensemble-Decision/
 │   ├── pretrained_weights/             # model checkpoints (not versioned)
 │   ├── results/                        # generated inference/fusion/evaluation outputs
 │   ├── sbatch/                         # reproducible Slurm entry points
+│   ├── target_applications/
+│   │   └── totalsegmentator/           # SuPreM fine-tuning/evaluation code
 │   └── requirements.txt
 ├── training_set/
 │   └── training_set/
@@ -59,8 +126,15 @@ Ensemble-Decision/
 │   └── UKCHLL###/                      # same per-case files; 5 cases
 ├── testing_set/
 │   └── UKCHLL###/                      # same per-case files; 65 cases
-├── Dataset/                            # source 3D-IRCADb data and derived training data
-└── WORD/                               # optional WORD benchmark data; separate from CURVAS
+└── Totalsegmentator_dataset/
+    └── s####/
+        ├── ct.nii.gz
+        └── segmentations/
+            ├── pancreas.nii.gz
+            ├── liver.nii.gz
+            ├── kidney_left.nii.gz
+            ├── kidney_right.nii.gz
+            └── ...                     # remaining TotalSegmentator labels
 ```
 
 The CURVAS experiment uses 20 training cases, 5 validation cases, and 65
@@ -72,6 +146,11 @@ affine transform. The inference array accepts either `image.nii.gz` or
 data. `annotation_1.nii.gz` is the training target for the random forest and
 for deriving weighted-consensus weights; testing annotations are used only for
 evaluation.
+
+The extracted TotalSegmentator v2.0.1 archive uses one `s####/` directory per
+CT scan, with the image stored as `ct.nii.gz` and individual anatomical masks
+under `segmentations/`. Its SuPreM application code is located under
+`SuPreM/target_applications/totalsegmentator/`.
 
 Place the required checkpoints under `SuPreM/pretrained_weights/`:
 
@@ -109,6 +188,8 @@ binary and identify voxels evaluated by every base model. Do not mix case IDs,
 NIfTI grids, or affine transforms between these directories.
 
 ## Reproduce The Experiment
+
+# Obtain dataset
 
 The Slurm scripts assume a GPU-capable environment named `suprem-h200`; create
 an equivalent environment with the dependencies below, then adapt the conda
